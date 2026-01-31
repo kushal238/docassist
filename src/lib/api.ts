@@ -39,49 +39,51 @@ export async function ingestDocument(documentId: string): Promise<{ success: boo
   return { success: true };
 }
 
-// Mock: Generate clinical brief from patient records
+// Generate clinical brief from patient records (uses real AI backend)
 export async function generateBrief(patientId: string): Promise<BriefContent> {
-  // Simulate AI processing
-  await new Promise(resolve => setTimeout(resolve, 3000));
+  const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
+  const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
   
-  console.log(`[Mock API] Generating brief for patient: ${patientId}`);
-  
-  return {
-    summary: "62-year-old female with history of Type 2 Diabetes and Hypertension presenting with increased fatigue and polyuria over the past 2 weeks.",
-    relevantHistory: [
-      "Type 2 Diabetes Mellitus - diagnosed 2018",
-      "Essential Hypertension - diagnosed 2015",
-      "Hyperlipidemia - diagnosed 2019"
-    ],
-    currentSymptoms: [
-      "Fatigue - onset 2 weeks ago, severity 7/10",
-      "Increased urination frequency",
-      "Mild blurred vision"
-    ],
-    medications: [
-      "Metformin 1000mg BID",
-      "Lisinopril 20mg daily",
-      "Atorvastatin 40mg nightly"
-    ],
-    allergies: [
-      "Penicillin - rash"
-    ],
-    abnormalLabs: [
-      "HbA1c: 9.2% (elevated from 7.8%)",
-      "Fasting glucose: 186 mg/dL",
-      "Creatinine: 1.4 mg/dL (mild elevation)"
-    ],
-    missingInfo: [
-      "Most recent ophthalmology exam",
-      "Foot exam documentation",
-      "Dietary compliance assessment"
-    ],
-    citations: {
-      summary: [{ docName: "Progress Note 01-15-2026", page: 1 }],
-      relevantHistory: [{ docName: "Medical History", page: 2 }],
-      abnormalLabs: [{ docName: "Lab Results 01-10-2026", page: 1 }]
+  try {
+    const response = await fetch(`${SUPABASE_URL}/functions/v1/generate-brief`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+      },
+      body: JSON.stringify({ patientId }),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      
+      if (response.status === 429) {
+        throw new Error('Rate limit exceeded. Please wait a moment and try again.');
+      }
+      
+      if (response.status === 402) {
+        throw new Error('AI service credits exhausted. Please contact your administrator.');
+      }
+      
+      throw new Error(errorData.error || 'Failed to generate brief');
     }
-  };
+
+    const data = await response.json();
+    
+    return {
+      summary: data.summary || "No summary available.",
+      relevantHistory: data.relevantHistory || [],
+      currentSymptoms: data.currentSymptoms || [],
+      medications: data.medications || [],
+      allergies: data.allergies || [],
+      abnormalLabs: data.abnormalLabs || [],
+      missingInfo: data.missingInfo || [],
+      citations: data.citations || {},
+    };
+  } catch (error) {
+    console.error('[API] Generate brief error:', error);
+    throw error;
+  }
 }
 
 // RAG chat - ask questions about patient records (uses real AI backend)
