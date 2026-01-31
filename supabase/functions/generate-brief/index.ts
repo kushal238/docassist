@@ -12,7 +12,7 @@ serve(async (req) => {
   }
 
   try {
-    const { patientId } = await req.json();
+    const { patientId, chiefComplaint, clinicalNotes } = await req.json();
     
     if (!patientId) {
       return new Response(
@@ -49,10 +49,10 @@ serve(async (req) => {
         chunk_text,
         page_num,
         document_id,
-        documents!inner(filename)
+        documents!inner(filename, doc_type)
       `)
       .eq("patient_id", patientId)
-      .limit(30);
+      .limit(50);
 
     // Fetch symptoms
     const { data: symptoms } = await supabase
@@ -66,26 +66,40 @@ serve(async (req) => {
       .select("id, filename, doc_type")
       .eq("patient_id", patientId);
 
-    // Build context
+    // Build comprehensive context
     let context = "";
     
     if (patient) {
-      context += `## Patient Info:\nName: ${patient.full_name}\n`;
-      if (patient.dob) context += `DOB: ${patient.dob}\n`;
+      context += `## Patient Demographics:\nName: ${patient.full_name}\n`;
+      if (patient.dob) {
+        const age = Math.floor((new Date().getTime() - new Date(patient.dob).getTime()) / (365.25 * 24 * 60 * 60 * 1000));
+        context += `DOB: ${patient.dob} (Age: ${age} years)\n`;
+      }
       context += "\n";
     }
 
+    // Organize chunks by document type for better analysis
+    const chunksByType: Record<string, any[]> = {};
     if (chunks && chunks.length > 0) {
-      context += "## Document Contents:\n\n";
       chunks.forEach((chunk: any) => {
-        const docName = chunk.documents?.filename || "Unknown Document";
-        const pageNum = chunk.page_num || 1;
-        context += `[Document: "${docName}", Page ${pageNum}]\n${chunk.chunk_text}\n\n`;
+        const docType = chunk.documents?.doc_type || "other";
+        if (!chunksByType[docType]) chunksByType[docType] = [];
+        chunksByType[docType].push(chunk);
       });
+
+      // Add organized document contents
+      for (const [docType, typeChunks] of Object.entries(chunksByType)) {
+        context += `## ${docType.toUpperCase()} Documents:\n\n`;
+        typeChunks.forEach((chunk: any) => {
+          const docName = chunk.documents?.filename || "Unknown Document";
+          const pageNum = chunk.page_num || 1;
+          context += `[Document: "${docName}", Page ${pageNum}]\n${chunk.chunk_text}\n\n`;
+        });
+      }
     }
 
     if (symptoms && symptoms.length > 0) {
-      context += "\n## Reported Symptoms:\n";
+      context += "\n## Current Reported Symptoms:\n";
       symptoms.forEach((symptom: any) => {
         context += `- ${symptom.description}`;
         if (symptom.onset_date) context += ` (onset: ${symptom.onset_date})`;
@@ -95,32 +109,57 @@ serve(async (req) => {
     }
 
     if (documents && documents.length > 0) {
-      context += "\n## Available Documents:\n";
+      context += "\n## Available Documents Inventory:\n";
       documents.forEach((doc: any) => {
         context += `- ${doc.filename} (type: ${doc.doc_type})\n`;
       });
     }
 
-    console.log(`Generating brief for patient: ${patientId}, Chunks: ${chunks?.length || 0}, Symptoms: ${symptoms?.length || 0}`);
+    console.log(`Generating smart brief for patient: ${patientId}, Chief Complaint: ${chiefComplaint || 'None'}, Chunks: ${chunks?.length || 0}`);
 
-    const systemPrompt = `You are a medical AI assistant helping doctors prepare for patient visits. Generate a comprehensive clinical brief based on the available patient records.
+    // Build the smart history analysis prompt with chain-of-thought reasoning
+    const systemPrompt = `You are an expert clinical decision support AI assisting physicians with pre-visit preparation and real-time clinical reasoning.
 
-IMPORTANT RULES:
-1. Only include information found in the provided documents and symptoms.
-2. For each piece of information, include a citation in format [DocName p.X].
-3. If a section has no relevant information, list it as "Not found in records".
-4. Be concise but thorough - doctors are busy.
-5. Focus on clinically relevant information.
+## YOUR ROLE
+You perform intelligent, complaint-focused analysis of patient medical history. Unlike simple summarization, you actively reason through the clinical implications of historical data in the context of the current presentation.
 
-You must call the generate_clinical_brief function with the structured brief data.`;
+## CLINICAL REASONING APPROACH (Chain-of-Thought)
+Follow this internal reasoning process:
 
-    const userPrompt = `Generate a clinical brief for this patient based on the following records:
+1. **Parse the Chief Complaint**: Understand the clinical significance, typical differentials, and red flags
+2. **Scan History for Relevance**: Identify ONLY information that matters for THIS specific complaint
+3. **Connect the Dots**: Link historical patterns, medications, and conditions to the current presentation  
+4. **Generate Actionable Insights**: Provide specific, clinically useful recommendations
 
-${context || "No documents or symptoms have been recorded for this patient yet."}
+## CRITICAL RULES
+1. **Relevance Filter**: Only surface history that is clinically pertinent to the chief complaint. Omit irrelevant data.
+2. **Citation Required**: Every clinical claim must include [DocName p.X] citation format
+3. **Safety First**: Always flag drug interactions, contraindications, and critical alerts prominently
+4. **Be Specific**: Generic advice is useless. Provide patient-specific, actionable recommendations
+5. **Acknowledge Uncertainty**: If data is missing or unclear, explicitly state what's unknown
 
-Create a comprehensive brief with summary, relevant history, current symptoms, medications, allergies, abnormal labs, and missing information.`;
+## OUTPUT STYLE
+- Write like an experienced attending physician briefing a colleague
+- Be concise but thorough - physicians are busy
+- Prioritize high-yield information
+- Use clinical terminology appropriately
 
-    // Call Lovable AI with tool calling for structured output
+${chiefComplaint ? `## CHIEF COMPLAINT FOR THIS ENCOUNTER
+"${chiefComplaint}"
+${clinicalNotes ? `Additional clinical notes: ${clinicalNotes}` : ""}` : "## NOTE: No specific chief complaint provided. Generate a general pre-visit summary."}
+
+## PATIENT RECORDS
+${context || "No documents or symptoms have been recorded for this patient yet."}`;
+
+    const userPrompt = chiefComplaint 
+      ? `Analyze this patient's complete medical history in the context of their chief complaint: "${chiefComplaint}". 
+         
+         Perform intelligent relevance filtering to identify what matters for this specific presentation.
+         Generate a comprehensive clinical decision support brief with actionable insights.`
+      : `Generate a comprehensive clinical brief summarizing this patient's medical history for a pre-visit review. 
+         Highlight key information a physician should know before seeing this patient.`;
+
+    // Call Lovable AI with enhanced tool schema
     const aiResponse = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
       method: "POST",
       headers: {
@@ -137,53 +176,73 @@ Create a comprehensive brief with summary, relevant history, current symptoms, m
           {
             type: "function",
             function: {
-              name: "generate_clinical_brief",
-              description: "Generate a structured clinical brief for the patient",
+              name: "generate_smart_clinical_brief",
+              description: "Generate an intelligent, complaint-focused clinical brief with actionable insights",
               parameters: {
                 type: "object",
                 properties: {
                   summary: {
                     type: "string",
-                    description: "Brief 1-2 sentence summary of the patient's current situation with citations"
+                    description: "2-3 sentence executive summary of the patient's current situation and key considerations for this visit. Include citations."
                   },
                   relevantHistory: {
                     type: "array",
                     items: { type: "string" },
-                    description: "List of relevant medical history items with citations"
+                    description: "Key past diagnoses, conditions, surgeries, and clinical events that are RELEVANT to the current complaint. Each item must include [DocName p.X] citation."
                   },
                   currentSymptoms: {
                     type: "array",
                     items: { type: "string" },
-                    description: "List of current symptoms with onset dates and severity with citations"
+                    description: "Current symptoms with onset dates and severity, correlated with historical patterns if applicable."
                   },
                   medications: {
                     type: "array",
                     items: { type: "string" },
-                    description: "List of current medications with dosages and citations"
+                    description: "Current medications with dosages. Flag those relevant to the chief complaint."
                   },
                   allergies: {
                     type: "array",
                     items: { type: "string" },
-                    description: "List of known allergies with reactions and citations"
+                    description: "Known allergies with reaction types. Include citations."
                   },
                   abnormalLabs: {
                     type: "array",
                     items: { type: "string" },
-                    description: "List of abnormal lab values with citations"
+                    description: "Recent abnormal lab values relevant to the presentation. Include citations."
+                  },
+                  clinicalInsights: {
+                    type: "array",
+                    items: { type: "string" },
+                    description: "Red flags, concerning patterns, and clinical observations based on connecting historical data to the current complaint. Be specific and actionable."
+                  },
+                  differentialConsiderations: {
+                    type: "array",
+                    items: { type: "string" },
+                    description: "Potential diagnoses to consider based on the combination of history and current complaint. Explain reasoning briefly."
+                  },
+                  actionableRecommendations: {
+                    type: "array",
+                    items: { type: "string" },
+                    description: "Specific follow-up questions to ask, examinations to perform, or tests to order based on this analysis."
+                  },
+                  safetyAlerts: {
+                    type: "array",
+                    items: { type: "string" },
+                    description: "Critical safety information: drug interactions, contraindications, allergies relevant to likely treatments. HIGH PRIORITY."
                   },
                   missingInfo: {
                     type: "array",
                     items: { type: "string" },
-                    description: "List of important information that appears to be missing from records"
+                    description: "Important information that appears to be missing from records and would help clinical decision-making."
                   }
                 },
-                required: ["summary", "relevantHistory", "currentSymptoms", "medications", "allergies", "abnormalLabs", "missingInfo"],
+                required: ["summary", "relevantHistory", "currentSymptoms", "medications", "allergies", "abnormalLabs", "clinicalInsights", "differentialConsiderations", "actionableRecommendations", "safetyAlerts", "missingInfo"],
                 additionalProperties: false
               }
             }
           }
         ],
-        tool_choice: { type: "function", function: { name: "generate_clinical_brief" } },
+        tool_choice: { type: "function", function: { name: "generate_smart_clinical_brief" } },
       }),
     });
 
@@ -214,7 +273,7 @@ Create a comprehensive brief with summary, relevant history, current symptoms, m
     
     // Extract the tool call arguments
     const toolCall = aiData.choices?.[0]?.message?.tool_calls?.[0];
-    if (!toolCall || toolCall.function.name !== "generate_clinical_brief") {
+    if (!toolCall || toolCall.function.name !== "generate_smart_clinical_brief") {
       console.error("No valid tool call in response:", aiData);
       return new Response(
         JSON.stringify({ error: "Failed to generate structured brief" }),
@@ -242,20 +301,24 @@ Create a comprehensive brief with summary, relevant history, current symptoms, m
       while ((match = citationRegex.exec(text)) !== null) {
         if (!allCitations[field]) allCitations[field] = [];
         const citation = { docName: match[1], page: parseInt(match[2], 10) };
-        // Avoid duplicates
         if (!allCitations[field].some(c => c.docName === citation.docName && c.page === citation.page)) {
           allCitations[field].push(citation);
         }
       }
     };
 
+    // Extract citations from all relevant fields
     extractCitations(briefData.summary || "", "summary");
     (briefData.relevantHistory || []).forEach((item: string) => extractCitations(item, "relevantHistory"));
     (briefData.abnormalLabs || []).forEach((item: string) => extractCitations(item, "abnormalLabs"));
     (briefData.medications || []).forEach((item: string) => extractCitations(item, "medications"));
+    (briefData.clinicalInsights || []).forEach((item: string) => extractCitations(item, "clinicalInsights"));
+    (briefData.differentialConsiderations || []).forEach((item: string) => extractCitations(item, "differentialConsiderations"));
+    (briefData.safetyAlerts || []).forEach((item: string) => extractCitations(item, "safetyAlerts"));
 
     const result = {
       ...briefData,
+      chiefComplaint: chiefComplaint || null,
       citations: allCitations,
     };
 

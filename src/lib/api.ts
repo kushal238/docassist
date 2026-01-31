@@ -1,5 +1,4 @@
-// Mock API functions - these will be replaced with actual edge function calls
-// Each function simulates the expected behavior for demo purposes
+// API functions for AI-powered medical record analysis
 
 export interface Citation {
   docName: string;
@@ -13,7 +12,13 @@ export interface BriefContent {
   medications: string[];
   allergies: string[];
   abnormalLabs: string[];
+  // New smart analysis fields
+  clinicalInsights: string[];
+  differentialConsiderations: string[];
+  actionableRecommendations: string[];
+  safetyAlerts: string[];
   missingInfo: string[];
+  chiefComplaint?: string | null;
   citations: Record<string, Citation[]>;
 }
 
@@ -39,8 +44,12 @@ export async function ingestDocument(documentId: string): Promise<{ success: boo
   return { success: true };
 }
 
-// Generate clinical brief from patient records (uses real AI backend)
-export async function generateBrief(patientId: string): Promise<BriefContent> {
+// Generate smart clinical brief with complaint-focused analysis
+export async function generateBrief(
+  patientId: string, 
+  chiefComplaint?: string,
+  clinicalNotes?: string
+): Promise<BriefContent> {
   const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
   const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
   
@@ -51,7 +60,7 @@ export async function generateBrief(patientId: string): Promise<BriefContent> {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
       },
-      body: JSON.stringify({ patientId }),
+      body: JSON.stringify({ patientId, chiefComplaint, clinicalNotes }),
     });
 
     if (!response.ok) {
@@ -77,7 +86,12 @@ export async function generateBrief(patientId: string): Promise<BriefContent> {
       medications: data.medications || [],
       allergies: data.allergies || [],
       abnormalLabs: data.abnormalLabs || [],
+      clinicalInsights: data.clinicalInsights || [],
+      differentialConsiderations: data.differentialConsiderations || [],
+      actionableRecommendations: data.actionableRecommendations || [],
+      safetyAlerts: data.safetyAlerts || [],
       missingInfo: data.missingInfo || [],
+      chiefComplaint: data.chiefComplaint || null,
       citations: data.citations || {},
     };
   } catch (error) {
