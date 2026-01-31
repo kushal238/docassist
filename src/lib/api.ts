@@ -84,56 +84,66 @@ export async function generateBrief(patientId: string): Promise<BriefContent> {
   };
 }
 
-// Mock: RAG chat - ask questions about patient records
+// RAG chat - ask questions about patient records (uses real AI backend)
 export async function ragChat(
   patientId: string,
   sessionId: string,
   message: string
 ): Promise<ChatMessage> {
-  // Simulate AI processing
-  await new Promise(resolve => setTimeout(resolve, 1500));
+  const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
+  const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
   
-  console.log(`[Mock API] RAG chat for patient: ${patientId}, message: ${message}`);
-  
-  // Simulate different responses based on query
-  const lowerMessage = message.toLowerCase();
-  
-  if (lowerMessage.includes('medication') || lowerMessage.includes('drug')) {
+  try {
+    const response = await fetch(`${SUPABASE_URL}/functions/v1/rag-chat`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+      },
+      body: JSON.stringify({
+        patientId,
+        sessionId,
+        message,
+      }),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      
+      if (response.status === 429) {
+        return {
+          role: 'assistant',
+          content: 'Rate limit exceeded. Please wait a moment and try again.',
+          citations: [],
+        };
+      }
+      
+      if (response.status === 402) {
+        return {
+          role: 'assistant',
+          content: 'AI service credits exhausted. Please contact your administrator.',
+          citations: [],
+        };
+      }
+      
+      throw new Error(errorData.error || 'Failed to get AI response');
+    }
+
+    const data = await response.json();
+    
     return {
       role: 'assistant',
-      content: "Based on the available records, the patient is currently taking Metformin 1000mg twice daily for diabetes management, Lisinopril 20mg daily for blood pressure control, and Atorvastatin 40mg at bedtime for cholesterol.",
-      citations: [
-        { docName: "Medication List", page: 1 },
-        { docName: "Progress Note 01-15-2026", page: 2 }
-      ]
+      content: data.content,
+      citations: data.citations || [],
     };
-  }
-  
-  if (lowerMessage.includes('lab') || lowerMessage.includes('test')) {
+  } catch (error) {
+    console.error('[API] RAG chat error:', error);
     return {
       role: 'assistant',
-      content: "The most recent labs from January 10th show HbA1c at 9.2% (previously 7.8%), indicating worsening glycemic control. Fasting glucose was 186 mg/dL and creatinine showed mild elevation at 1.4 mg/dL.",
-      citations: [
-        { docName: "Lab Results 01-10-2026", page: 1 }
-      ]
+      content: 'Sorry, I encountered an error processing your request. Please try again.',
+      citations: [],
     };
   }
-  
-  if (lowerMessage.includes('allergy') || lowerMessage.includes('allergies')) {
-    return {
-      role: 'assistant',
-      content: "The patient has a documented allergy to Penicillin, which causes a rash reaction.",
-      citations: [
-        { docName: "Medical History", page: 1 }
-      ]
-    };
-  }
-  
-  return {
-    role: 'assistant',
-    content: "Not found in provided records. Please try rephrasing your question or ensure the relevant documents have been uploaded and processed.",
-    citations: []
-  };
 }
 
 // Mock: Explain document for patient
