@@ -1,4 +1,5 @@
 // API functions for AI-powered medical record analysis
+import { supabase } from '@/integrations/supabase/client';
 
 export interface Citation {
   docName: string;
@@ -50,35 +51,25 @@ export async function generateBrief(
   chiefComplaint?: string,
   clinicalNotes?: string
 ): Promise<BriefContent> {
-  const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
-  const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
-  
   try {
-    const response = await fetch(`${SUPABASE_URL}/functions/v1/generate-brief`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-      },
-      body: JSON.stringify({ patientId, chiefComplaint, clinicalNotes }),
+    const { data, error } = await supabase.functions.invoke('generate-brief', {
+      body: { patientId, chiefComplaint, clinicalNotes },
     });
 
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
+    if (error) {
+      console.error('[API] Generate brief error:', error);
       
-      if (response.status === 429) {
+      if (error.message?.includes('Rate limit')) {
         throw new Error('Rate limit exceeded. Please wait a moment and try again.');
       }
       
-      if (response.status === 402) {
+      if (error.message?.includes('credits')) {
         throw new Error('AI service credits exhausted. Please contact your administrator.');
       }
       
-      throw new Error(errorData.error || 'Failed to generate brief');
+      throw new Error(error.message || 'Failed to generate brief');
     }
 
-    const data = await response.json();
-    
     return {
       summary: data.summary || "No summary available.",
       relevantHistory: data.relevantHistory || [],
@@ -106,27 +97,15 @@ export async function ragChat(
   sessionId: string,
   message: string
 ): Promise<ChatMessage> {
-  const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
-  const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
-  
   try {
-    const response = await fetch(`${SUPABASE_URL}/functions/v1/rag-chat`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-      },
-      body: JSON.stringify({
-        patientId,
-        sessionId,
-        message,
-      }),
+    const { data, error } = await supabase.functions.invoke('rag-chat', {
+      body: { patientId, sessionId, message },
     });
 
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
+    if (error) {
+      console.error('[API] RAG chat error:', error);
       
-      if (response.status === 429) {
+      if (error.message?.includes('Rate limit')) {
         return {
           role: 'assistant',
           content: 'Rate limit exceeded. Please wait a moment and try again.',
@@ -134,7 +113,7 @@ export async function ragChat(
         };
       }
       
-      if (response.status === 402) {
+      if (error.message?.includes('credits')) {
         return {
           role: 'assistant',
           content: 'AI service credits exhausted. Please contact your administrator.',
@@ -142,11 +121,9 @@ export async function ragChat(
         };
       }
       
-      throw new Error(errorData.error || 'Failed to get AI response');
+      throw new Error(error.message || 'Failed to get AI response');
     }
 
-    const data = await response.json();
-    
     return {
       role: 'assistant',
       content: data.content,
