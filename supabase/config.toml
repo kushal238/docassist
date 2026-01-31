@@ -5,3 +5,6 @@ verify_jwt = false
 
 [functions.generate-brief]
 verify_jwt = false
+
+[functions.generate-soap]
+verify_jwt = false

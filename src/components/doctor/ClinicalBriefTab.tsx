@@ -24,15 +24,22 @@ import {
 import { toast } from 'sonner';
 import { generateBrief, BriefContent, Citation } from '@/lib/api';
 import CitationChip from '@/components/CitationChip';
+import ConfidenceBadge, { determineConfidence } from '@/components/doctor/ConfidenceBadge';
+import SafetyEscalationBanner from '@/components/doctor/SafetyEscalationBanner';
+import SOAPNoteGenerator from '@/components/doctor/SOAPNoteGenerator';
+import ExportBriefButton from '@/components/doctor/ExportBriefButton';
+import PatientExplanationToggle, { simplifyForPatient } from '@/components/doctor/PatientExplanationToggle';
 
 interface ClinicalBriefTabProps {
   patientId: string;
+  patientName?: string;
   existingBrief: BriefContent | null;
   onBriefGenerated: () => void;
 }
 
 export default function ClinicalBriefTab({ 
-  patientId, 
+  patientId,
+  patientName,
   existingBrief,
   onBriefGenerated 
 }: ClinicalBriefTabProps) {
@@ -41,6 +48,7 @@ export default function ClinicalBriefTab({
   const [brief, setBrief] = useState<BriefContent | null>(existingBrief);
   const [chiefComplaint, setChiefComplaint] = useState('');
   const [clinicalNotes, setClinicalNotes] = useState('');
+  const [patientMode, setPatientMode] = useState(false);
 
   const handleGenerateBrief = async () => {
     setGenerating(true);
@@ -52,7 +60,6 @@ export default function ClinicalBriefTab({
       );
       setBrief(newBrief);
 
-      // Save to database
       await supabase.from('briefs').insert({
         patient_id: patientId,
         created_by_profile_id: profile?.id,
@@ -74,10 +81,32 @@ export default function ClinicalBriefTab({
     return (
       <div className="inline-flex flex-wrap gap-1 ml-2">
         {citations.map((citation, i) => (
-          <CitationChip key={i} docName={citation.docName} page={citation.page} />
+          <CitationChip 
+            key={i} 
+            docName={citation.docName} 
+            page={citation.page}
+            patientId={patientId}
+          />
         ))}
       </div>
     );
+  };
+
+  // Helper to apply patient mode simplification
+  const displayText = (text: string): string => {
+    return patientMode ? simplifyForPatient(text) : text;
+  };
+
+  // Helper to determine confidence for a section
+  const getSectionConfidence = (sectionKey: string, items: string[]) => {
+    const citations = brief?.citations?.[sectionKey] || [];
+    const hasLabData = sectionKey === 'abnormalLabs' || citations.some(c => 
+      c.docName.toLowerCase().includes('lab') || c.docName.toLowerCase().includes('test')
+    );
+    const hasDocumentation = citations.length > 0;
+    const hasPatientReportedOnly = !hasDocumentation && items.length > 0;
+    
+    return determineConfidence(citations.length, hasLabData, hasDocumentation, hasPatientReportedOnly);
   };
 
   const suggestedComplaints = [
@@ -160,6 +189,13 @@ export default function ClinicalBriefTab({
 
   return (
     <div className="space-y-6">
+      {/* Safety Escalation Banner - Non-dismissable for critical patterns */}
+      <SafetyEscalationBanner
+        safetyAlerts={brief.safetyAlerts || []}
+        citations={brief.citations?.safetyAlerts}
+        patientId={patientId}
+      />
+
       <div className="flex items-center justify-between flex-wrap gap-4">
         <div>
           <h2 className="text-xl font-semibold">Smart Clinical Brief</h2>
@@ -172,26 +208,46 @@ export default function ClinicalBriefTab({
             </div>
           )}
         </div>
-        <div className="flex gap-2">
-          <Input
-            value={chiefComplaint}
-            onChange={(e) => setChiefComplaint(e.target.value)}
-            placeholder="New complaint..."
-            className="w-48"
+        
+        <div className="flex flex-wrap items-center gap-2">
+          {/* Patient Explanation Toggle */}
+          <PatientExplanationToggle
+            enabled={patientMode}
+            onChange={setPatientMode}
           />
-          <Button variant="outline" onClick={handleGenerateBrief} disabled={generating}>
-            {generating ? (
-              <>
-                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                Regenerating...
-              </>
-            ) : (
-              <>
-                <Sparkles className="h-4 w-4 mr-2" />
-                Regenerate
-              </>
-            )}
-          </Button>
+          
+          {/* SOAP Note Generator */}
+          <SOAPNoteGenerator 
+            patientId={patientId} 
+            brief={brief}
+            patientName={patientName}
+          />
+          
+          {/* Export Button */}
+          <ExportBriefButton brief={brief} patientName={patientName} />
+          
+          {/* Regenerate */}
+          <div className="flex gap-2">
+            <Input
+              value={chiefComplaint}
+              onChange={(e) => setChiefComplaint(e.target.value)}
+              placeholder="New complaint..."
+              className="w-40"
+            />
+            <Button variant="outline" onClick={handleGenerateBrief} disabled={generating}>
+              {generating ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Regenerating...
+                </>
+              ) : (
+                <>
+                  <Sparkles className="h-4 w-4 mr-2" />
+                  Regenerate
+                </>
+              )}
+            </Button>
+          </div>
         </div>
       </div>
 
@@ -199,26 +255,38 @@ export default function ClinicalBriefTab({
         {/* Summary */}
         <Card className="card-healthcare border-l-4 border-l-primary">
           <CardHeader className="pb-2">
-            <CardTitle className="text-lg flex items-center gap-2">
-              <FileText className="h-5 w-5" />
-              Executive Summary
+            <CardTitle className="text-lg flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <FileText className="h-5 w-5" />
+                Executive Summary
+              </div>
+              <ConfidenceBadge 
+                level={getSectionConfidence('summary', [brief.summary]).level}
+                dataSource={getSectionConfidence('summary', [brief.summary]).source}
+              />
             </CardTitle>
           </CardHeader>
           <CardContent>
             <p className="text-foreground leading-relaxed">
-              {brief.summary}
+              {displayText(brief.summary)}
               {renderCitations(brief.citations?.summary)}
             </p>
           </CardContent>
         </Card>
 
-        {/* Safety Alerts - Always show first if present */}
+        {/* Safety Alerts - Always show first if present (but after banner) */}
         {brief.safetyAlerts && brief.safetyAlerts.length > 0 && (
           <Card className="card-healthcare border-l-4 border-l-destructive bg-destructive/5">
             <CardHeader className="pb-2">
-              <CardTitle className="text-lg flex items-center gap-2 text-destructive">
-                <ShieldAlert className="h-5 w-5" />
-                Safety Alerts
+              <CardTitle className="text-lg flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2 text-destructive">
+                  <ShieldAlert className="h-5 w-5" />
+                  Safety Alerts
+                </div>
+                <ConfidenceBadge 
+                  level={getSectionConfidence('safetyAlerts', brief.safetyAlerts).level}
+                  dataSource={getSectionConfidence('safetyAlerts', brief.safetyAlerts).source}
+                />
               </CardTitle>
             </CardHeader>
             <CardContent>
@@ -226,7 +294,7 @@ export default function ClinicalBriefTab({
                 {brief.safetyAlerts.map((item, i) => (
                   <li key={i} className="flex items-start gap-2 text-sm">
                     <AlertCircle className="h-4 w-4 text-destructive mt-0.5 flex-shrink-0" />
-                    <span className="font-medium">{item}</span>
+                    <span className="font-medium">{displayText(item)}</span>
                   </li>
                 ))}
               </ul>
@@ -239,9 +307,15 @@ export default function ClinicalBriefTab({
         {brief.clinicalInsights && brief.clinicalInsights.length > 0 && (
           <Card className="card-healthcare border-l-4 border-l-warning">
             <CardHeader className="pb-2">
-              <CardTitle className="text-lg flex items-center gap-2">
-                <Lightbulb className="h-5 w-5 text-warning" />
-                Clinical Insights
+              <CardTitle className="text-lg flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <Lightbulb className="h-5 w-5 text-warning" />
+                  Clinical Insights
+                </div>
+                <ConfidenceBadge 
+                  level={getSectionConfidence('clinicalInsights', brief.clinicalInsights).level}
+                  dataSource={getSectionConfidence('clinicalInsights', brief.clinicalInsights).source}
+                />
               </CardTitle>
             </CardHeader>
             <CardContent>
@@ -249,7 +323,7 @@ export default function ClinicalBriefTab({
                 {brief.clinicalInsights.map((item, i) => (
                   <li key={i} className="flex items-start gap-2 text-sm">
                     <span className="h-1.5 w-1.5 rounded-full bg-warning mt-2 flex-shrink-0" />
-                    <span>{item}</span>
+                    <span>{displayText(item)}</span>
                   </li>
                 ))}
               </ul>
@@ -262,9 +336,15 @@ export default function ClinicalBriefTab({
         {brief.differentialConsiderations && brief.differentialConsiderations.length > 0 && (
           <Card className="card-healthcare">
             <CardHeader className="pb-2">
-              <CardTitle className="text-lg flex items-center gap-2">
-                <Stethoscope className="h-5 w-5" />
-                Differential Considerations
+              <CardTitle className="text-lg flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <Stethoscope className="h-5 w-5" />
+                  Differential Considerations
+                </div>
+                <ConfidenceBadge 
+                  level={getSectionConfidence('differentialConsiderations', brief.differentialConsiderations).level}
+                  dataSource={getSectionConfidence('differentialConsiderations', brief.differentialConsiderations).source}
+                />
               </CardTitle>
             </CardHeader>
             <CardContent>
@@ -272,7 +352,7 @@ export default function ClinicalBriefTab({
                 {brief.differentialConsiderations.map((item, i) => (
                   <li key={i} className="flex items-start gap-2 text-sm">
                     <span className="font-medium text-primary mr-1">{i + 1}.</span>
-                    <span>{item}</span>
+                    <span>{displayText(item)}</span>
                   </li>
                 ))}
               </ul>
@@ -285,9 +365,15 @@ export default function ClinicalBriefTab({
         {brief.actionableRecommendations && brief.actionableRecommendations.length > 0 && (
           <Card className="card-healthcare border-l-4 border-l-primary">
             <CardHeader className="pb-2">
-              <CardTitle className="text-lg flex items-center gap-2">
-                <ListChecks className="h-5 w-5" />
-                Actionable Recommendations
+              <CardTitle className="text-lg flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <ListChecks className="h-5 w-5" />
+                  Actionable Recommendations
+                </div>
+                <ConfidenceBadge 
+                  level="moderate"
+                  dataSource="AI-generated recommendations based on clinical analysis"
+                />
               </CardTitle>
             </CardHeader>
             <CardContent>
@@ -297,7 +383,7 @@ export default function ClinicalBriefTab({
                     <span className="h-5 w-5 rounded bg-primary/10 flex items-center justify-center text-xs font-medium text-primary flex-shrink-0">
                       {i + 1}
                     </span>
-                    <span>{item}</span>
+                    <span>{displayText(item)}</span>
                   </li>
                 ))}
               </ul>
@@ -310,9 +396,15 @@ export default function ClinicalBriefTab({
           {/* Relevant History */}
           <Card className="card-healthcare">
             <CardHeader className="pb-2">
-              <CardTitle className="text-lg flex items-center gap-2">
-                <Clock className="h-5 w-5" />
-                Relevant History
+              <CardTitle className="text-lg flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <Clock className="h-5 w-5" />
+                  Relevant History
+                </div>
+                <ConfidenceBadge 
+                  level={getSectionConfidence('relevantHistory', brief.relevantHistory).level}
+                  dataSource={getSectionConfidence('relevantHistory', brief.relevantHistory).source}
+                />
               </CardTitle>
             </CardHeader>
             <CardContent>
@@ -320,7 +412,7 @@ export default function ClinicalBriefTab({
                 {brief.relevantHistory.map((item, i) => (
                   <li key={i} className="flex items-start gap-2 text-sm">
                     <span className="h-1.5 w-1.5 rounded-full bg-primary mt-2 flex-shrink-0" />
-                    <span>{item}</span>
+                    <span>{displayText(item)}</span>
                   </li>
                 ))}
               </ul>
@@ -331,9 +423,15 @@ export default function ClinicalBriefTab({
           {/* Current Symptoms */}
           <Card className="card-healthcare">
             <CardHeader className="pb-2">
-              <CardTitle className="text-lg flex items-center gap-2">
-                <AlertTriangle className="h-5 w-5" />
-                Current Symptoms
+              <CardTitle className="text-lg flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <AlertTriangle className="h-5 w-5" />
+                  Current Symptoms
+                </div>
+                <ConfidenceBadge 
+                  level={brief.currentSymptoms.length > 0 ? 'high' : 'limited'}
+                  dataSource="Based on patient-reported symptoms"
+                />
               </CardTitle>
             </CardHeader>
             <CardContent>
@@ -341,7 +439,7 @@ export default function ClinicalBriefTab({
                 {brief.currentSymptoms.map((item, i) => (
                   <li key={i} className="flex items-start gap-2 text-sm">
                     <span className="h-1.5 w-1.5 rounded-full bg-warning mt-2 flex-shrink-0" />
-                    <span>{item}</span>
+                    <span>{displayText(item)}</span>
                   </li>
                 ))}
               </ul>
@@ -351,9 +449,15 @@ export default function ClinicalBriefTab({
           {/* Medications & Allergies */}
           <Card className="card-healthcare">
             <CardHeader className="pb-2">
-              <CardTitle className="text-lg flex items-center gap-2">
-                <Pill className="h-5 w-5" />
-                Medications & Allergies
+              <CardTitle className="text-lg flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <Pill className="h-5 w-5" />
+                  Medications & Allergies
+                </div>
+                <ConfidenceBadge 
+                  level={getSectionConfidence('medications', brief.medications).level}
+                  dataSource={getSectionConfidence('medications', brief.medications).source}
+                />
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
@@ -361,7 +465,7 @@ export default function ClinicalBriefTab({
                 <h4 className="text-sm font-medium mb-2">Medications</h4>
                 <ul className="space-y-1">
                   {brief.medications.map((item, i) => (
-                    <li key={i} className="text-sm text-muted-foreground">• {item}</li>
+                    <li key={i} className="text-sm text-muted-foreground">• {displayText(item)}</li>
                   ))}
                 </ul>
               </div>
@@ -369,7 +473,7 @@ export default function ClinicalBriefTab({
                 <h4 className="text-sm font-medium mb-2">Allergies</h4>
                 <ul className="space-y-1">
                   {brief.allergies.map((item, i) => (
-                    <li key={i} className="text-sm text-destructive">⚠️ {item}</li>
+                    <li key={i} className="text-sm text-destructive">⚠️ {displayText(item)}</li>
                   ))}
                 </ul>
               </div>
@@ -379,9 +483,15 @@ export default function ClinicalBriefTab({
           {/* Abnormal Labs */}
           <Card className="card-healthcare">
             <CardHeader className="pb-2">
-              <CardTitle className="text-lg flex items-center gap-2">
-                <TestTube className="h-5 w-5" />
-                Abnormal Labs
+              <CardTitle className="text-lg flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <TestTube className="h-5 w-5" />
+                  Abnormal Labs
+                </div>
+                <ConfidenceBadge 
+                  level={getSectionConfidence('abnormalLabs', brief.abnormalLabs).level}
+                  dataSource={getSectionConfidence('abnormalLabs', brief.abnormalLabs).source}
+                />
               </CardTitle>
             </CardHeader>
             <CardContent>
@@ -389,7 +499,7 @@ export default function ClinicalBriefTab({
                 {brief.abnormalLabs.map((item, i) => (
                   <li key={i} className="flex items-start gap-2 text-sm">
                     <span className="h-1.5 w-1.5 rounded-full bg-destructive mt-2 flex-shrink-0" />
-                    <span>{item}</span>
+                    <span>{displayText(item)}</span>
                   </li>
                 ))}
               </ul>
@@ -405,17 +515,29 @@ export default function ClinicalBriefTab({
               <CardTitle className="text-lg flex items-center gap-2 text-muted-foreground">
                 <AlertTriangle className="h-5 w-5" />
                 Missing Information
+                <Badge variant="outline" className="text-[10px] ml-2">
+                  Data gaps identified
+                </Badge>
               </CardTitle>
             </CardHeader>
             <CardContent>
               <ul className="space-y-1">
                 {brief.missingInfo.map((item, i) => (
-                  <li key={i} className="text-sm text-muted-foreground">• {item}</li>
+                  <li key={i} className="text-sm text-muted-foreground">• {displayText(item)}</li>
                 ))}
               </ul>
             </CardContent>
           </Card>
         )}
+
+        {/* Disclaimer */}
+        <div className="flex items-start gap-2 p-3 bg-muted/50 rounded-lg text-xs text-muted-foreground">
+          <AlertCircle className="h-4 w-4 mt-0.5 flex-shrink-0" />
+          <p>
+            <strong>Disclaimer:</strong> Clinical decision support only — not a diagnosis. 
+            All AI-generated content should be verified with direct patient evaluation and clinical judgment.
+          </p>
+        </div>
       </div>
     </div>
   );

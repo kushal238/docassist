@@ -5,19 +5,32 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent } from '@/components/ui/card';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { Badge } from '@/components/ui/badge';
 import { 
   Send, 
   Loader2, 
   MessageSquare,
   User,
-  Bot
+  Bot,
+  Sparkles
 } from 'lucide-react';
 import { ragChat, ChatMessage } from '@/lib/api';
 import CitationChip from '@/components/CitationChip';
+import PatientExplanationToggle, { simplifyForPatient } from '@/components/doctor/PatientExplanationToggle';
 
 interface ChatTabProps {
   patientId: string;
 }
+
+// Clinical copilot suggested questions
+const SUGGESTED_QUESTIONS = [
+  { label: "Symptom progression", query: "Summarize symptom progression over time" },
+  { label: "Red flags", query: "What red flags are present in this patient's records?" },
+  { label: "Changes since last visit", query: "What has changed since the last visit?" },
+  { label: "Urgent findings", query: "What findings require urgent attention?" },
+  { label: "Drug interactions", query: "Are there any potential drug interactions to be aware of?" },
+  { label: "Missing workup", query: "What workup or tests might be missing?" },
+];
 
 export default function ChatTab({ patientId }: ChatTabProps) {
   const { profile } = useAuth();
@@ -27,14 +40,13 @@ export default function ChatTab({ patientId }: ChatTabProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
+  const [patientMode, setPatientMode] = useState(false);
 
   useEffect(() => {
-    // Create or get existing session
     initSession();
   }, [patientId]);
 
   useEffect(() => {
-    // Auto-scroll to bottom
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
@@ -42,7 +54,6 @@ export default function ChatTab({ patientId }: ChatTabProps) {
 
   const initSession = async () => {
     try {
-      // Check for existing session
       const { data: existingSessions } = await supabase
         .from('chat_sessions')
         .select('id')
@@ -54,7 +65,6 @@ export default function ChatTab({ patientId }: ChatTabProps) {
       if (existingSessions && existingSessions.length > 0) {
         setSessionId(existingSessions[0].id);
         
-        // Load existing messages
         const { data: existingMessages } = await supabase
           .from('chat_messages')
           .select('*')
@@ -69,7 +79,6 @@ export default function ChatTab({ patientId }: ChatTabProps) {
           })));
         }
       } else {
-        // Create new session
         const { data: newSession, error } = await supabase
           .from('chat_sessions')
           .insert({
@@ -87,32 +96,33 @@ export default function ChatTab({ patientId }: ChatTabProps) {
     }
   };
 
-  const handleSend = async () => {
-    if (!input.trim() || !sessionId) return;
+  const handleSend = async (customMessage?: string) => {
+    const messageToSend = customMessage || input.trim();
+    if (!messageToSend || !sessionId) return;
 
-    const userMessage = input.trim();
-    setInput('');
+    if (!customMessage) setInput('');
     setLoading(true);
 
-    // Add user message to UI
-    const newUserMessage: ChatMessage = { role: 'user', content: userMessage };
+    const newUserMessage: ChatMessage = { role: 'user', content: messageToSend };
     setMessages(prev => [...prev, newUserMessage]);
 
     try {
-      // Save user message to DB
       await supabase.from('chat_messages').insert({
         session_id: sessionId,
         role: 'user',
-        content: userMessage,
+        content: messageToSend,
       });
 
-      // Get AI response
-      const response = await ragChat(patientId, sessionId, userMessage);
+      const response = await ragChat(patientId, sessionId, messageToSend);
       
-      // Add AI response to UI
-      setMessages(prev => [...prev, response]);
+      // Apply patient mode simplification if enabled
+      const finalContent = patientMode 
+        ? simplifyForPatient(response.content) 
+        : response.content;
+      
+      const finalResponse = { ...response, content: finalContent };
+      setMessages(prev => [...prev, finalResponse]);
 
-      // Save AI response to DB
       await supabase.from('chat_messages').insert({
         session_id: sessionId,
         role: 'assistant',
@@ -130,39 +140,59 @@ export default function ChatTab({ patientId }: ChatTabProps) {
     }
   };
 
-  const suggestedQuestions = [
-    "What are the current medications?",
-    "What do the latest lab results show?",
-    "Are there any known allergies?",
-    "What is the patient's medical history?",
-  ];
+  const handleSuggestedClick = (query: string) => {
+    handleSend(query);
+  };
 
   return (
     <div className="flex flex-col h-[600px]">
       <Card className="card-healthcare flex-1 flex flex-col overflow-hidden">
+        {/* Header with patient mode toggle */}
+        <div className="border-b p-3 flex items-center justify-between bg-muted/30">
+          <div className="flex items-center gap-2">
+            <MessageSquare className="h-4 w-4 text-primary" />
+            <span className="text-sm font-medium">Ask the Chart</span>
+            <Badge variant="outline" className="text-[10px]">AI-Powered</Badge>
+          </div>
+          <PatientExplanationToggle
+            enabled={patientMode}
+            onChange={setPatientMode}
+            loading={loading}
+          />
+        </div>
+
         <ScrollArea className="flex-1 p-4" ref={scrollRef}>
           {messages.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-full text-center py-8">
               <div className="rounded-full bg-primary/10 p-4 mb-4">
-                <MessageSquare className="h-8 w-8 text-primary" />
+                <Sparkles className="h-8 w-8 text-primary" />
               </div>
-              <h3 className="text-lg font-medium mb-2">Ask the Chart</h3>
+              <h3 className="text-lg font-medium mb-2">Clinical Copilot</h3>
               <p className="text-sm text-muted-foreground max-w-sm mb-6">
-                Ask questions about this patient's records. Answers will include 
+                Ask questions about this patient's records. Get instant answers with 
                 citations to source documents.
               </p>
-              <div className="flex flex-wrap gap-2 justify-center">
-                {suggestedQuestions.map((q, i) => (
-                  <Button
-                    key={i}
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setInput(q)}
-                    className="text-xs"
-                  >
-                    {q}
-                  </Button>
-                ))}
+              
+              {/* Suggested clinical questions */}
+              <div className="w-full max-w-lg">
+                <p className="text-xs text-muted-foreground mb-3 uppercase tracking-wide">
+                  Suggested Questions
+                </p>
+                <div className="flex flex-wrap gap-2 justify-center">
+                  {SUGGESTED_QUESTIONS.map((q, i) => (
+                    <Button
+                      key={i}
+                      variant="outline"
+                      size="sm"
+                      onClick={() => handleSuggestedClick(q.query)}
+                      className="text-xs gap-1 hover:bg-primary/10 hover:border-primary/50"
+                      disabled={loading}
+                    >
+                      <Sparkles className="h-3 w-3" />
+                      {q.label}
+                    </Button>
+                  ))}
+                </div>
               </div>
             </div>
           ) : (
@@ -194,6 +224,7 @@ export default function ChatTab({ patientId }: ChatTabProps) {
                             key={ci}
                             docName={citation.docName}
                             page={citation.page}
+                            patientId={patientId}
                           />
                         ))}
                       </div>
@@ -219,6 +250,26 @@ export default function ChatTab({ patientId }: ChatTabProps) {
             </div>
           )}
         </ScrollArea>
+
+        {/* Quick suggestions when there are messages */}
+        {messages.length > 0 && (
+          <div className="px-4 py-2 border-t bg-muted/30">
+            <div className="flex gap-2 overflow-x-auto pb-1">
+              {SUGGESTED_QUESTIONS.slice(0, 4).map((q, i) => (
+                <Button
+                  key={i}
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => handleSuggestedClick(q.query)}
+                  className="text-xs whitespace-nowrap flex-shrink-0"
+                  disabled={loading}
+                >
+                  {q.label}
+                </Button>
+              ))}
+            </div>
+          </div>
+        )}
         
         <CardContent className="border-t p-4">
           <form
@@ -231,7 +282,9 @@ export default function ChatTab({ patientId }: ChatTabProps) {
             <Input
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              placeholder="Ask a question about this patient's records..."
+              placeholder={patientMode 
+                ? "Ask a question (responses will be in plain language)..." 
+                : "Ask a question about this patient's records..."}
               disabled={loading}
             />
             <Button type="submit" disabled={loading || !input.trim()}>

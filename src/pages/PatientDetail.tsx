@@ -160,6 +160,7 @@ export default function PatientDetail() {
           <TabsContent value="brief" className="animate-fade-in">
             <ClinicalBriefTab
               patientId={patient.id}
+              patientName={patient.full_name}
               existingBrief={existingBrief}
               onBriefGenerated={fetchPatientData}
             />
