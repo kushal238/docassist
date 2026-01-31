@@ -27,15 +27,8 @@ import {
   AlertCircle
 } from 'lucide-react';
 import { toast } from 'sonner';
-import { BriefContent, Citation } from '@/lib/api';
+import { BriefContent, Citation, SOAPNote, generateSOAP } from '@/lib/api';
 import CitationChip from '@/components/CitationChip';
-
-interface SOAPNote {
-  subjective: { content: string; citations: Citation[] };
-  objective: { content: string; citations: Citation[] };
-  assessment: { content: string; citations: Citation[] };
-  plan: { content: string; citations: Citation[] };
-}
 
 interface SOAPNoteGeneratorProps {
   patientId: string;
@@ -71,24 +64,7 @@ export default function SOAPNoteGenerator({
   const generateSOAPNote = async () => {
     setGenerating(true);
     try {
-      const response = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/generate-soap`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
-        },
-        body: JSON.stringify({ 
-          patientId, 
-          brief,
-          patientName,
-        }),
-      });
-
-      if (!response.ok) {
-        throw new Error('Failed to generate SOAP note');
-      }
-
-      const data = await response.json();
+      const data = await generateSOAP(patientId, brief, patientName);
       setSoapNote(data);
       setEditedSections({});
       toast.success('SOAP note generated successfully');
@@ -105,25 +81,8 @@ export default function SOAPNoteGenerator({
     
     setRegeneratingSection(section);
     try {
-      const response = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/generate-soap`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
-        },
-        body: JSON.stringify({ 
-          patientId, 
-          brief,
-          patientName,
-          regenerateSection: section,
-        }),
-      });
+      const data = await generateSOAP(patientId, brief, patientName, section);
 
-      if (!response.ok) {
-        throw new Error('Failed to regenerate section');
-      }
-
-      const data = await response.json();
       setSoapNote(prev => prev ? {
         ...prev,
         [section]: data[section],

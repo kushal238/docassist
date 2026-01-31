@@ -69,7 +69,45 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         .eq('id', userId)
         .single();
 
-      if (error) throw error;
+      if (error) {
+        if (error.code === 'PGRST116') {
+          console.log('Profile not found, checking if we can restore from metadata...');
+          
+          // Try to recover profile from auth metadata (handles case where DB was wiped but Auth user remains)
+          const { data: { user } } = await supabase.auth.getUser();
+          
+          if (user && user.id === userId && user.user_metadata) {
+            const { full_name, role } = user.user_metadata;
+            
+            if (full_name && role) {
+              console.log('Restoring missing profile from auth metadata...');
+              const { data: newProfile, error: insertError } = await supabase
+                .from('profiles')
+                .insert([
+                  { 
+                    id: userId,
+                    full_name: full_name,
+                    role: role
+                  }
+                ])
+                .select()
+                .single();
+              
+              if (!insertError && newProfile) {
+                console.log('Profile restored successfully');
+                setProfile(newProfile as Profile);
+                return;
+              } else {
+                console.error('Failed to restore profile:', insertError);
+              }
+            }
+          }
+          
+          // If we couldn't restore, just return (loading will be set to false in finally)
+          return;
+        }
+        throw error;
+      }
       setProfile(data as Profile);
     } catch (error) {
       console.error('Error fetching profile:', error);
@@ -81,7 +119,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const signUp = async (email: string, password: string, fullName: string, role: UserRole) => {
     const redirectUrl = `${window.location.origin}/`;
     
-    const { error } = await supabase.auth.signUp({
+    const { data, error } = await supabase.auth.signUp({
       email,
       password,
       options: {
@@ -92,6 +130,31 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         },
       },
     });
+
+    if (!error && data.user && data.session) {
+      // Manual profile creation fallback ONLY if we have a session (logged in)
+      // If no session (e.g. email confirmation pending), we must rely on the DB trigger
+      const { error: profileError } = await supabase
+        .from('profiles')
+        .insert([
+          { 
+            id: data.user.id,
+            full_name: fullName,
+            role: role
+          }
+        ])
+        .select()
+        .single();
+        
+      if (profileError) {
+        // If error is duplicate key, it means trigger worked, so we ignore
+        if (profileError.code !== '23505') {
+           console.error('Error creating profile fallback:', profileError);
+        }
+      }
+    } else if (!error && data.user && !data.session) {
+      console.log('Signup successful, waiting for email verification. Profile creation handled by DB trigger.');
+    }
 
     return { error: error as Error | null };
   };
