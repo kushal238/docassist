@@ -5,19 +5,25 @@ import { BriefContent, SOAPNote } from "./api";
 // Initialize Gemini
 const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
 
-export async function generateGeminiBrief(
-  patientContext: string,
-  chiefComplaint?: string,
-  clinicalNotes?: string
-): Promise<BriefContent> {
+// Helper to run Gemini generation
+async function runGemini(prompt: string, modelName: string = "gemini-3-pro-preview"): Promise<string> {
   if (!apiKey) {
     throw new Error("VITE_GEMINI_API_KEY is not set in .env");
   }
 
   const genAI = new GoogleGenerativeAI(apiKey);
-  // Using gemini-1.5-pro as the robust model (mapped from user request for "Gemini 3.0")
-  const model = genAI.getGenerativeModel({ model: "gemini-1.5-pro" });
+  const model = genAI.getGenerativeModel({ model: modelName });
 
+  const result = await model.generateContent(prompt);
+  const response = await result.response;
+  return response.text();
+}
+
+export async function generateGeminiBrief(
+  patientContext: string,
+  chiefComplaint?: string,
+  clinicalNotes?: string
+): Promise<BriefContent> {
   const prompt = `
     You are an expert medical AI assistant helping a doctor prepare for a patient visit.
     
@@ -56,9 +62,7 @@ export async function generateGeminiBrief(
   `;
 
   try {
-    const result = await model.generateContent(prompt);
-    const response = await result.response;
-    const text = response.text();
+    const text = await runGemini(prompt);
     
     // Clean up any markdown code blocks if Gemini adds them
     const cleanJson = text.replace(/```json/g, '').replace(/```/g, '').trim();
@@ -74,14 +78,6 @@ export async function generateGeminiChat(
   patientContext: string,
   message: string
 ): Promise<{ content: string; citations: [] }> {
-  if (!apiKey) {
-    throw new Error("VITE_GEMINI_API_KEY is not set in .env");
-  }
-
-  const genAI = new GoogleGenerativeAI(apiKey);
-  // Using gemini-1.5-pro for chat as well for better context understanding
-  const model = genAI.getGenerativeModel({ model: "gemini-3-pro-preview" });
-
   const prompt = `
     You are an expert medical AI assistant helping a doctor by answering questions about a patient's medical records.
     
@@ -99,9 +95,7 @@ export async function generateGeminiChat(
   `;
 
   try {
-    const result = await model.generateContent(prompt);
-    const response = await result.response;
-    const text = response.text();
+    const text = await runGemini(prompt);
     
     return {
       content: text,
@@ -118,16 +112,9 @@ export async function generateGeminiSOAP(
   patientName?: string,
   regenerateSection?: string
 ): Promise<SOAPNote> {
-  if (!apiKey) {
-    throw new Error("VITE_GEMINI_API_KEY is not set in .env");
-  }
-
-  const genAI = new GoogleGenerativeAI(apiKey);
-  const model = genAI.getGenerativeModel({ model: "gemini-1.5-pro" });
-
   const prompt = `
-    You are an expert medical AI assistant helping a doctor document a patient visit.
-    
+    You are an expert medical AI assistant helping a doctor generate a SOAP note.
+
     PATIENT CONTEXT (Clinical Brief):
     ${JSON.stringify(brief, null, 2)}
     
@@ -155,9 +142,7 @@ export async function generateGeminiSOAP(
   `;
 
   try {
-    const result = await model.generateContent(prompt);
-    const response = await result.response;
-    const text = response.text();
+    const text = await runGemini(prompt, "gemini-1.5-pro");
     
     const cleanJson = text.replace(/```json/g, '').replace(/```/g, '').trim();
     return JSON.parse(cleanJson) as SOAPNote;
