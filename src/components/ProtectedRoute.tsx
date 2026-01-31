@@ -1,8 +1,14 @@
+import { ReactNode } from 'react';
 import { Navigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { Loader2 } from 'lucide-react';
 
-export default function Index() {
+interface ProtectedRouteProps {
+  children: ReactNode;
+  allowedRoles?: ('doctor' | 'patient')[];
+}
+
+export default function ProtectedRoute({ children, allowedRoles }: ProtectedRouteProps) {
   const { user, profile, loading } = useAuth();
 
   if (loading) {
@@ -13,15 +19,14 @@ export default function Index() {
     );
   }
 
-  // Not logged in, redirect to login
   if (!user) {
     return <Navigate to="/login" replace />;
   }
 
-  // Redirect based on role
-  if (profile?.role === 'doctor') {
-    return <Navigate to="/doctor" replace />;
+  if (allowedRoles && profile && !allowedRoles.includes(profile.role)) {
+    // Redirect to appropriate dashboard
+    return <Navigate to={profile.role === 'doctor' ? '/doctor' : '/patient'} replace />;
   }
 
-  return <Navigate to="/patient" replace />;
+  return <>{children}</>;
 }
