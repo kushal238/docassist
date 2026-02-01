@@ -214,6 +214,182 @@ export type Database = {
           },
         ]
       }
+      encounters: {
+        Row: {
+          created_at: string | null
+          encounter_date: string
+          encounter_type: string
+          id: string
+          patient_id: string
+          provider_name: string | null
+          source_document_id: string | null
+          specialty: string
+          chief_complaint: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          encounter_date: string
+          encounter_type?: string
+          id?: string
+          patient_id: string
+          provider_name?: string | null
+          source_document_id?: string | null
+          specialty?: string
+          chief_complaint?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          encounter_date?: string
+          encounter_type?: string
+          id?: string
+          patient_id?: string
+          provider_name?: string | null
+          source_document_id?: string | null
+          specialty?: string
+          chief_complaint?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "encounters_patient_id_fkey"
+            columns: ["patient_id"]
+            isOneToOne: false
+            referencedRelation: "patients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "encounters_source_document_id_fkey"
+            columns: ["source_document_id"]
+            isOneToOne: false
+            referencedRelation: "documents"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      labs: {
+        Row: {
+          collected_at: string
+          created_at: string | null
+          encounter_id: string | null
+          id: string
+          is_abnormal: boolean | null
+          lab_name: string
+          patient_id: string
+          reference_high: number | null
+          reference_low: number | null
+          source_document_id: string | null
+          unit: string | null
+          value: number
+        }
+        Insert: {
+          collected_at: string
+          created_at?: string | null
+          encounter_id?: string | null
+          id?: string
+          is_abnormal?: boolean | null
+          lab_name: string
+          patient_id: string
+          reference_high?: number | null
+          reference_low?: number | null
+          source_document_id?: string | null
+          unit?: string | null
+          value: number
+        }
+        Update: {
+          collected_at?: string
+          created_at?: string | null
+          encounter_id?: string | null
+          id?: string
+          is_abnormal?: boolean | null
+          lab_name?: string
+          patient_id?: string
+          reference_high?: number | null
+          reference_low?: number | null
+          source_document_id?: string | null
+          unit?: string | null
+          value?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "labs_encounter_id_fkey"
+            columns: ["encounter_id"]
+            isOneToOne: false
+            referencedRelation: "encounters"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "labs_patient_id_fkey"
+            columns: ["patient_id"]
+            isOneToOne: false
+            referencedRelation: "patients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "labs_source_document_id_fkey"
+            columns: ["source_document_id"]
+            isOneToOne: false
+            referencedRelation: "documents"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      soap_notes: {
+        Row: {
+          assessment: string | null
+          created_at: string | null
+          created_by_profile_id: string | null
+          encounter_id: string
+          id: string
+          objective: Json | null
+          patient_id: string
+          plan: string | null
+          subjective: string | null
+        }
+        Insert: {
+          assessment?: string | null
+          created_at?: string | null
+          created_by_profile_id?: string | null
+          encounter_id: string
+          id?: string
+          objective?: Json | null
+          patient_id: string
+          plan?: string | null
+          subjective?: string | null
+        }
+        Update: {
+          assessment?: string | null
+          created_at?: string | null
+          created_by_profile_id?: string | null
+          encounter_id?: string
+          id?: string
+          objective?: Json | null
+          patient_id?: string
+          plan?: string | null
+          subjective?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "soap_notes_created_by_profile_id_fkey"
+            columns: ["created_by_profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "soap_notes_encounter_id_fkey"
+            columns: ["encounter_id"]
+            isOneToOne: false
+            referencedRelation: "encounters"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "soap_notes_patient_id_fkey"
+            columns: ["patient_id"]
+            isOneToOne: false
+            referencedRelation: "patients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       doctor_patient: {
         Row: {
           assigned_at: string | null
