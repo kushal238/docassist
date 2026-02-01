@@ -109,7 +109,7 @@ Return strictly valid JSON (no markdown, no \`\`\`):
   "medications": ["Active medications with doses - ONLY those explicitly listed"],
   "allergies": ["Known allergies with reaction type if documented"],
   "abnormalLabs": ["Abnormal values with reference to normal range, date"],
-  "clinicalInsights": ["Connections between findings WITH SOURCES - e.g., 'Declining GFR (Cr 1.4, Jan 15) + NSAID use (ibuprofen, Dr. Smith) warrants review'"],
+  "clinicalInsights": ["Connections between findings WITH DATED SOURCES - e.g., 'Declining GFR (Cr 1.4, Jan 15, 2025) + NSAID use (ibuprofen, Dr. Smith, Jan 10, 2025) warrants review. AFib (dx: cardiology, Nov 15, 2025) increases stroke risk.'"],
   "differentialConsiderations": ["Top 3-5 diagnoses to consider given presentation, ordered by likelihood"],
   "actionableRecommendations": ["Specific: tests to order, questions to ask, consults to consider"],
   "safetyAlerts": ["CRITICAL: Drug interactions, allergy conflicts, 'can't miss' diagnoses, red flags"],

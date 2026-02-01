@@ -51,7 +51,7 @@ interface CitationCheck {
 
 /**
  * Extract citation patterns from text
- * Patterns: (Hgb 9.2, Dec 2), (warfarin on_hold, cardiology), (AFib, dx: cardiology)
+ * Patterns: (Hgb 9.2, Dec 2, 2025), (warfarin on_hold, cardiology), (AFib, dx: cardiology)
  */
 function extractCitations(text: string): string[] {
   const citationPattern = /\([^)]+(?:,\s*(?:Dec|Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov)\s*\d{1,2}|,\s*(?:cardiology|pcp|gi|neuro|pulm|endo|rheum|oncology)|,\s*dx:|on_hold|active)[^)]*\)/gi;

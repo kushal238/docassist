@@ -26,14 +26,14 @@ Use this rubric for confidence scores:
 - Flag when critical gaps prevent confident assessment
 
 ## CITATION REQUIREMENTS
-ALL clinical statements must include inline sources:
-- Labs: "(Hgb 9.2, Dec 2)" or "(BUN 42, Dec 1)"
-- Medications: "(warfarin on_hold, cardiology, Dec 1)"
-- Diagnoses: "(AFib, dx: cardiology)"
-- Vitals: "(HR 112, Dec 8)"
+ALL clinical statements must include inline sources with DATES:
+- Labs: "(Hgb 9.2, Dec 2, 2025)" - value + date
+- Medications: "(warfarin on_hold, cardiology, Dec 1, 2025)" - status + specialty + date
+- Diagnoses: "(AFib, dx: cardiology, Nov 15, 2025)" - condition + specialty + date diagnosed
+- Vitals: "(HR 112, Dec 8, 2025)" - value + date
 
 Example with citations:
-"Patient's stroke risk elevated due to AFib (dx: cardiology) with held anticoagulation (warfarin on_hold since Dec 1, cardiology). Concurrent anemia (Hgb 9.2, Dec 2) may worsen symptoms."
+"Patient's stroke risk elevated due to AFib (dx: cardiology, Nov 15, 2025) with held anticoagulation (warfarin on_hold, cardiology, Dec 1, 2025). Concurrent anemia (Hgb 9.2, Dec 2, 2025) may worsen cardiac symptoms."
 
 ## URGENCY LEVELS
 - **Emergent:** Immediate threat to life (minutes matter)

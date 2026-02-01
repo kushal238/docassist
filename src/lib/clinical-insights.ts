@@ -220,7 +220,7 @@ Schema:
   "medications": ["list from medications provided"],
   "allergies": ["from data or 'None reported'"],
   "abnormalLabs": ["list from labs marked abnormal"],
-  "clinicalInsights": ["YOUR analysis WITH INLINE SOURCES - e.g., 'AFib (dx: cardiology) + held warfarin (on_hold since Dec 1) increases stroke risk'"],
+  "clinicalInsights": ["YOUR analysis WITH DATED SOURCES - e.g., 'AFib (dx: cardiology, Nov 15, 2025) + held warfarin (on_hold, Dec 1, 2025) increases stroke risk. Anemia (Hgb 9.2, Dec 2, 2025) may worsen symptoms.'"],
   "differentialConsiderations": ["based on symptoms + history"],
   "actionableRecommendations": ["specific next steps"],
   "safetyAlerts": ["IMPORTANT: Include all pre-detected alerts provided + any you identify"],
@@ -229,10 +229,10 @@ Schema:
   "citations": {}
 }
 
-IMPORTANT: In clinicalInsights, ALWAYS cite the source of each data point inline:
-- Labs: include value and date, e.g., "(Hgb 9.2, Dec 2)"
-- Medications: include status and prescriber, e.g., "(warfarin on_hold, cardiology)"
-- Diagnoses: include specialty, e.g., "(AFib, dx: cardiology)"
+IMPORTANT: In clinicalInsights, ALWAYS cite the source with DATE for each data point inline:
+- Labs: include value and date, e.g., "(Hgb 9.2, Dec 2, 2025)"
+- Medications: include status, specialty, and date, e.g., "(warfarin on_hold, cardiology, Dec 1, 2025)"
+- Diagnoses: include specialty and date diagnosed, e.g., "(AFib, dx: cardiology, Nov 15, 2025)"
 
 CRITICAL: The "safetyAlerts" section MUST include the pre-detected clinical alerts provided in the context. These were identified by validated clinical rules.`;
 
@@ -388,7 +388,7 @@ Generate a clinical brief in valid JSON. Schema:
   "medications": [],
   "allergies": [],
   "abnormalLabs": [],
-  "clinicalInsights": ["YOUR analysis WITH SOURCES - e.g., 'AFib (cardiology) + held warfarin (Dec 1) = stroke risk'"],
+  "clinicalInsights": ["YOUR analysis WITH DATED SOURCES - e.g., 'AFib (dx: cardiology, Nov 15, 2025) + held warfarin (on_hold, cardiology, Dec 1, 2025) increases stroke risk.'"],
   "differentialConsiderations": [],
   "actionableRecommendations": [],
   "safetyAlerts": ["MUST include pre-detected alerts"],
