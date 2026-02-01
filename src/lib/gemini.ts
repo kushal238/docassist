@@ -11,7 +11,7 @@ import {
 const KEYWORDS_AI_URL = "https://api.keywordsai.co/api/chat/completions";
 
 // Default model - can be swapped to other supported models
-const DEFAULT_MODEL = "gpt-4o-mini";
+const DEFAULT_MODEL = "gpt-5.2";
 
 interface RequestMetadata {
   patientId?: string;

@@ -120,7 +120,7 @@ export async function executePrompt(
   const client = getAIClient();
   
   const {
-    model = 'gpt-4o', // Placeholder - actual model defined in Keywords AI UI
+    model = 'gpt-5.2',
     temperature,
     maxTokens,
   } = options;
@@ -186,7 +186,7 @@ export async function executePromptWithHeaders(
   } = {}
 ): Promise<{ content: string; traceId: string | null }> {
   const apiKey = getApiKey();
-  const { model = 'gpt-4o' } = options;
+  const { model = 'gpt-5.2' } = options;
 
   const response = await fetch(`${KEYWORDS_AI_BASE_URL}chat/completions`, {
     method: 'POST',

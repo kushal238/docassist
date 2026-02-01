@@ -68,7 +68,7 @@ export async function generateFollowUpQuestion(
         Authorization: `Bearer ${KEYWORDS_AI_API_KEY}`,
       },
       body: JSON.stringify({
-        model: "gpt-4o-mini",
+        model: "gpt-5.2",
         messages: [
           { role: "system", content: systemPrompt },
           { role: "user", content: userPrompt },
@@ -165,7 +165,7 @@ export async function generateQuestionSet(primarySymptom: string): Promise<Recor
         Authorization: `Bearer ${KEYWORDS_AI_API_KEY}`,
       },
       body: JSON.stringify({
-        model: "gpt-4o-mini",
+        model: "gpt-5.2",
         messages: [
           {
             role: "system",

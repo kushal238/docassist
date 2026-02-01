@@ -1,6 +1,5 @@
-import { useState, useRef } from 'react';
+import { useState } from 'react';
 import { supabase } from '@/integrations/supabase/client';
-import { useAuth } from '@/hooks/useAuth';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -8,15 +7,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Slider } from '@/components/ui/slider';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
 import { 
-  Upload, 
   FileText, 
   Loader2, 
   Calendar,
@@ -25,7 +16,6 @@ import {
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { toast } from 'sonner';
-import { ingestDocument } from '@/lib/api';
 
 interface Document {
   id: string;
@@ -51,73 +41,11 @@ interface TimelineTabProps {
 }
 
 export default function TimelineTab({ patientId, documents, symptoms, onRefresh }: TimelineTabProps) {
-  const { profile } = useAuth();
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  
-  const [uploading, setUploading] = useState(false);
-  const [docType, setDocType] = useState<string>('note');
-  
   // Symptom form state
   const [symptomDescription, setSymptomDescription] = useState('');
   const [symptomOnset, setSymptomOnset] = useState('');
   const [symptomSeverity, setSymptomSeverity] = useState([5]);
   const [savingSymptom, setSavingSymptom] = useState(false);
-
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    if (file.type !== 'application/pdf') {
-      toast.error('Please upload a PDF file');
-      return;
-    }
-
-    setUploading(true);
-    try {
-      // Generate unique path
-      const documentId = crypto.randomUUID();
-      const storagePath = `patient/${patientId}/${documentId}.pdf`;
-
-      // Upload to storage
-      const { error: uploadError } = await supabase.storage
-        .from('documents')
-        .upload(storagePath, file);
-
-      if (uploadError) throw uploadError;
-
-      // Create document record
-      const { data: docData, error: docError } = await supabase
-        .from('documents')
-        .insert({
-          id: documentId,
-          patient_id: patientId,
-          uploader_profile_id: profile?.id,
-          storage_path: storagePath,
-          filename: file.name,
-          doc_type: docType as 'note' | 'lab' | 'imaging' | 'meds' | 'other',
-          status: 'processed',
-        })
-        .select()
-        .single();
-
-      if (docError) throw docError;
-
-      toast.success('Document uploaded successfully');
-      
-      // Trigger ingestion (mock)
-      ingestDocument(documentId);
-
-      onRefresh();
-    } catch (error) {
-      console.error('Upload error:', error);
-      toast.error('Failed to upload document');
-    } finally {
-      setUploading(false);
-      if (fileInputRef.current) {
-        fileInputRef.current.value = '';
-      }
-    }
-  };
 
   const handleSymptomSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -160,63 +88,8 @@ export default function TimelineTab({ patientId, documents, symptoms, onRefresh 
 
   return (
     <div className="grid lg:grid-cols-2 gap-6">
-      {/* Left column: Upload & Symptom form */}
+      {/* Left column: Symptom form */}
       <div className="space-y-6">
-        {/* Document Upload */}
-        <Card className="card-healthcare">
-          <CardHeader>
-            <CardTitle className="text-lg flex items-center gap-2">
-              <Upload className="h-5 w-5" />
-              Upload Document
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="space-y-2">
-              <Label>Document Type</Label>
-              <Select value={docType} onValueChange={setDocType}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="note">Clinical Note</SelectItem>
-                  <SelectItem value="lab">Lab Results</SelectItem>
-                  <SelectItem value="imaging">Imaging</SelectItem>
-                  <SelectItem value="meds">Medications</SelectItem>
-                  <SelectItem value="other">Other</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div>
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept=".pdf"
-                onChange={handleFileUpload}
-                className="hidden"
-                id="file-upload"
-              />
-              <Button
-                variant="outline"
-                className="w-full h-24 border-dashed"
-                onClick={() => fileInputRef.current?.click()}
-                disabled={uploading}
-              >
-                {uploading ? (
-                  <>
-                    <Loader2 className="h-5 w-5 mr-2 animate-spin" />
-                    Uploading...
-                  </>
-                ) : (
-                  <>
-                    <FileText className="h-5 w-5 mr-2" />
-                    Click to upload PDF
-                  </>
-                )}
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-
         {/* Symptom Intake */}
         <Card className="card-healthcare">
           <CardHeader>

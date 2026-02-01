@@ -77,7 +77,7 @@ export default function KeywordsSetupPage() {
           'Authorization': `Bearer ${apiKey}`,
         },
         body: JSON.stringify({
-          model: 'gpt-4o-mini',
+          model: 'gpt-5.2',
           messages: [{ role: 'user', content: 'test' }],
           max_tokens: 1,
         }),
