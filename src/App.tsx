@@ -12,6 +12,7 @@ import DoctorDashboard from "./pages/DoctorDashboard";
 import PatientDetail from "./pages/PatientDetail";
 import PatientDashboard from "./pages/PatientDashboard";
 import PatientDocDetail from "./pages/PatientDocDetail";
+import KeywordsSetupPage from "./pages/KeywordsSetupPage";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -41,6 +42,14 @@ const App = () => (
               element={
                 <ProtectedRoute allowedRoles={['doctor']}>
                   <PatientDetail />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/doctor/keywords-setup"
+              element={
+                <ProtectedRoute allowedRoles={['doctor']}>
+                  <KeywordsSetupPage />
                 </ProtectedRoute>
               }
             />

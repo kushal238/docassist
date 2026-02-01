@@ -3,9 +3,10 @@ import { useParams } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
 import DoctorLayout from '@/components/layout/DoctorLayout';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Loader2, Clock, FileText, MessageSquare } from 'lucide-react';
+import { Loader2, Clock, FileText, MessageSquare, Brain } from 'lucide-react';
 import TimelineTab from '@/components/doctor/TimelineTab';
 import ClinicalBriefTab from '@/components/doctor/ClinicalBriefTab';
+import DeepAnalysisTab from '@/components/doctor/DeepAnalysisTab';
 import ChatTab from '@/components/doctor/ChatTab';
 import { BriefContent } from '@/lib/api';
 
@@ -133,18 +134,22 @@ export default function PatientDetail() {
         </div>
 
         <Tabs defaultValue="timeline" className="space-y-6">
-          <TabsList className="grid w-full max-w-md grid-cols-3">
+          <TabsList className="grid w-full max-w-xl grid-cols-4">
             <TabsTrigger value="timeline" className="flex items-center gap-2">
               <Clock className="h-4 w-4" />
               <span className="hidden sm:inline">Timeline</span>
             </TabsTrigger>
             <TabsTrigger value="brief" className="flex items-center gap-2">
               <FileText className="h-4 w-4" />
-              <span className="hidden sm:inline">Clinical Brief</span>
+              <span className="hidden sm:inline">Quick Brief</span>
+            </TabsTrigger>
+            <TabsTrigger value="deep-analysis" className="flex items-center gap-2">
+              <Brain className="h-4 w-4" />
+              <span className="hidden sm:inline">Deep Analysis</span>
             </TabsTrigger>
             <TabsTrigger value="chat" className="flex items-center gap-2">
               <MessageSquare className="h-4 w-4" />
-              <span className="hidden sm:inline">Ask the Chart</span>
+              <span className="hidden sm:inline">Ask Chart</span>
             </TabsTrigger>
           </TabsList>
 
@@ -163,6 +168,13 @@ export default function PatientDetail() {
               patientName={patient.full_name}
               existingBrief={existingBrief}
               onBriefGenerated={fetchPatientData}
+            />
+          </TabsContent>
+
+          <TabsContent value="deep-analysis" className="animate-fade-in">
+            <DeepAnalysisTab
+              patientId={patient.id}
+              patientName={patient.full_name}
             />
           </TabsContent>
 
