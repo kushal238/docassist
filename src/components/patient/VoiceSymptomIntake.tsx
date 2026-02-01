@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -7,9 +7,15 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Mic, MicOff, Loader2, CheckCircle2, AlertTriangle, X } from 'lucide-react';
+import { Mic, MicOff, Loader2, CheckCircle2, AlertTriangle } from 'lucide-react';
 import { transcribeAudio, isTranscriptionConfident } from '@/lib/keywords-ai-speech';
 import { toast } from 'sonner';
+import { 
+  generateQuestionSet, 
+  FALLBACK_QUESTIONS, 
+  STEP_TO_TOPIC,
+  type QuestionTopic 
+} from '@/lib/symptom-questions';
 
 export interface SymptomSummary {
   primarySymptom: string;
@@ -38,13 +44,14 @@ interface VoiceSymptomIntakeProps {
 type RecordingState = 'idle' | 'recording' | 'transcribing' | 'review';
 type QuestionStep = 1 | 2 | 3 | 4 | 5 | 6 | 7; // 7 is review step
 
-const QUESTIONS = {
-  1: "What symptom is bothering you the most right now?",
-  2: "When did this start?",
-  3: "On a scale from 1 to 10, how severe is it right now?",
-  4: "Is it getting better, worse, or staying the same?",
-  5: "Do you have any other symptoms you think are related?",
-  6: "Have you had any of the following: high fever, chest pain, trouble breathing, confusion, or fainting?",
+// Default questions (used as fallback and for step 1)
+const DEFAULT_QUESTIONS: Record<number, string> = {
+  1: FALLBACK_QUESTIONS.primary_symptom,
+  2: FALLBACK_QUESTIONS.onset,
+  3: FALLBACK_QUESTIONS.severity,
+  4: FALLBACK_QUESTIONS.progression,
+  5: FALLBACK_QUESTIONS.associated_symptoms,
+  6: FALLBACK_QUESTIONS.red_flags,
 };
 
 export default function VoiceSymptomIntake({ open, onClose, onSubmit }: VoiceSymptomIntakeProps) {
@@ -54,6 +61,10 @@ export default function VoiceSymptomIntake({ open, onClose, onSubmit }: VoiceSym
   const [fullTranscript, setFullTranscript] = useState<string>('');
   const [error, setError] = useState<string | null>(null);
   const [micPermissionGranted, setMicPermissionGranted] = useState<boolean>(false);
+  
+  // Dynamic questions state
+  const [questions, setQuestions] = useState<Record<number, string>>(DEFAULT_QUESTIONS);
+  const [isGeneratingQuestions, setIsGeneratingQuestions] = useState(false);
 
   // Symptom data state
   const [symptomData, setSymptomData] = useState<Partial<SymptomSummary>>({
@@ -167,7 +178,11 @@ export default function VoiceSymptomIntake({ open, onClose, onSubmit }: VoiceSym
 
       const newTranscript = response.transcript.trim();
       setTranscript(newTranscript);
-      setFullTranscript(prev => prev ? `${prev}\n\nQ${currentStep}: ${newTranscript}` : `Q${currentStep}: ${newTranscript}`);
+      // Include the actual question in the transcript for context
+      const questionText = questions[currentStep];
+      setFullTranscript(prev => prev 
+        ? `${prev}\n\nQ: ${questionText}\nA: ${newTranscript}` 
+        : `Q: ${questionText}\nA: ${newTranscript}`);
       
       // Extract structured data based on current step
       extractStructuredData(newTranscript, currentStep);
@@ -247,23 +262,53 @@ export default function VoiceSymptomIntake({ open, onClose, onSubmit }: VoiceSym
     }
   };
 
-  const handleNext = () => {
+  // Generate personalized questions based on the primary symptom
+  const generatePersonalizedQuestions = useCallback(async (primarySymptom: string) => {
+    if (!primarySymptom.trim()) return;
+    
+    setIsGeneratingQuestions(true);
+    try {
+      const personalizedQuestions = await generateQuestionSet(primarySymptom);
+      
+      // Update questions 2-6 with personalized versions
+      setQuestions(prev => ({
+        ...prev,
+        2: personalizedQuestions.onset,
+        3: personalizedQuestions.severity,
+        4: personalizedQuestions.progression,
+        5: personalizedQuestions.associated_symptoms,
+        6: personalizedQuestions.red_flags,
+      }));
+    } catch (error) {
+      console.error('Failed to generate personalized questions:', error);
+      // Keep default questions on error
+    } finally {
+      setIsGeneratingQuestions(false);
+    }
+  }, []);
+
+  const handleNext = async () => {
     // Ensure current step's transcript is used if structured data wasn't extracted
-    if (transcript.trim()) {
+    const currentTranscript = transcript.trim();
+    
+    if (currentTranscript) {
       switch (currentStep) {
         case 1:
           if (!symptomData.primarySymptom) {
-            setSymptomData(prev => ({ ...prev, primarySymptom: transcript.trim() }));
+            setSymptomData(prev => ({ ...prev, primarySymptom: currentTranscript }));
           }
+          // Generate personalized questions based on the primary symptom
+          const symptom = symptomData.primarySymptom || currentTranscript;
+          generatePersonalizedQuestions(symptom);
           break;
         case 2:
           if (!symptomData.onset) {
-            setSymptomData(prev => ({ ...prev, onset: transcript.trim() }));
+            setSymptomData(prev => ({ ...prev, onset: currentTranscript }));
           }
           break;
         case 5:
           if (!symptomData.associatedSymptoms?.length) {
-            setSymptomData(prev => ({ ...prev, associatedSymptoms: [transcript.trim()] }));
+            setSymptomData(prev => ({ ...prev, associatedSymptoms: [currentTranscript] }));
           }
           break;
       }
@@ -333,6 +378,8 @@ export default function VoiceSymptomIntake({ open, onClose, onSubmit }: VoiceSym
     setTranscript('');
     setFullTranscript('');
     setError(null);
+    setQuestions(DEFAULT_QUESTIONS); // Reset to default questions
+    setIsGeneratingQuestions(false);
     setSymptomData({
       primarySymptom: '',
       onset: '',
@@ -399,7 +446,14 @@ export default function VoiceSymptomIntake({ open, onClose, onSubmit }: VoiceSym
       <div className="space-y-6">
         <div className="text-center space-y-2">
           <p className="text-sm text-muted-foreground">Question {currentStep} of 6</p>
-          <h3 className="text-lg font-medium">{QUESTIONS[currentStep]}</h3>
+          {isGeneratingQuestions && currentStep > 1 ? (
+            <div className="flex items-center justify-center gap-2">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              <span className="text-sm text-muted-foreground">Personalizing questions...</span>
+            </div>
+          ) : (
+            <h3 className="text-lg font-medium">{questions[currentStep]}</h3>
+          )}
         </div>
 
         {error && (
@@ -464,13 +518,21 @@ export default function VoiceSymptomIntake({ open, onClose, onSubmit }: VoiceSym
                     // Re-extract structured data when transcript is edited
                     extractStructuredData(newTranscript, currentStep);
                     // Update the full transcript for the current step
+                    const questionText = questions[currentStep];
                     setFullTranscript(prev => {
-                      const lines = prev.split('\n\n');
-                      const updatedLines = lines.filter(line => !line.startsWith(`Q${currentStep}:`));
+                      const sections = prev.split('\n\nQ: ');
+                      // Remove the current question's section if it exists
+                      const filteredSections = sections.filter(section => 
+                        !section.startsWith(questionText)
+                      );
                       if (newTranscript.trim()) {
-                        updatedLines.push(`Q${currentStep}: ${newTranscript}`);
+                        // Add updated section
+                        const newSection = sections.length === 0 || sections[0] === '' 
+                          ? `Q: ${questionText}\nA: ${newTranscript}`
+                          : `${questionText}\nA: ${newTranscript}`;
+                        filteredSections.push(newSection);
                       }
-                      return updatedLines.join('\n\n');
+                      return filteredSections.join('\n\nQ: ').replace(/^Q: Q: /, 'Q: ');
                     });
                   }}
                   placeholder="Record using the button above, or type your response here..."
