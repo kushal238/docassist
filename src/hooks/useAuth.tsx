@@ -28,6 +28,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);
 
+  const clearSessionAnalysisCache = () => {
+    if (typeof window === 'undefined') return;
+    const prefix = 'docassist:analysis:';
+    for (let i = sessionStorage.length - 1; i >= 0; i -= 1) {
+      const key = sessionStorage.key(i);
+      if (key && key.startsWith(prefix)) {
+        sessionStorage.removeItem(key);
+      }
+    }
+  };
+
   useEffect(() => {
     // Set up auth state listener FIRST
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
@@ -41,6 +52,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             fetchProfile(session.user.id);
           }, 0);
         } else {
+          clearSessionAnalysisCache();
           setProfile(null);
           setLoading(false);
         }
@@ -170,6 +182,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const signOut = async () => {
     await supabase.auth.signOut();
+    clearSessionAnalysisCache();
     setProfile(null);
   };
 
