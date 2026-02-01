@@ -42,6 +42,7 @@ interface ClinicalDataSources {
 interface UnifiedClinicalAnalysisProps {
   patientId: string;
   patientName?: string;
+  patientDOB?: string | null;
 }
 
 type AnalysisDepth = 'quick' | 'deep';
@@ -49,6 +50,7 @@ type AnalysisDepth = 'quick' | 'deep';
 export default function UnifiedClinicalAnalysis({
   patientId,
   patientName,
+  patientDOB,
 }: UnifiedClinicalAnalysisProps) {
   const { profile } = useAuth();
 
@@ -223,34 +225,35 @@ export default function UnifiedClinicalAnalysis({
           chiefComplaint || 'General clinical assessment'
         );
 
-        if (result.success) {
-          setDeepAnalysis(result);
-
-          setCurrentStage('Generating summary brief...');
-          const quickBrief = await generateBrief(
-            patientId,
-            chiefComplaint || undefined,
-            clinicalNotes
-          );
-          setBrief(quickBrief);
-
-          await supabase.from('briefs').insert({
-            patient_id: patientId,
-            created_by_profile_id: profile?.id,
-            content_json: JSON.parse(
-              JSON.stringify({
-                type: 'deep_analysis',
-                deep: result,
-                brief: quickBrief,
-                chiefComplaint,
-              })
-            ),
-          });
-
-          toast.success('Deep analysis complete');
-        } else {
+        if (!result.success) {
           toast.error(`Analysis failed: ${result.error}`);
+          return;
         }
+
+        setDeepAnalysis(result);
+
+        setCurrentStage('Generating summary brief...');
+        const quickBrief = await generateBrief(
+          patientId,
+          chiefComplaint || undefined,
+          clinicalNotes
+        );
+        setBrief(quickBrief);
+
+        await supabase.from('briefs').insert({
+          patient_id: patientId,
+          created_by_profile_id: profile?.id,
+          content_json: JSON.parse(
+            JSON.stringify({
+              type: 'deep_analysis',
+              deep: result,
+              brief: quickBrief,
+              chiefComplaint,
+            })
+          ),
+        });
+
+        toast.success('Deep analysis complete');
       }
     } catch (error) {
       console.error('Analysis error:', error);
@@ -277,9 +280,12 @@ export default function UnifiedClinicalAnalysis({
         <div className="flex items-center justify-between">
           <div>
             <h2 className="text-lg font-semibold">{patientName || 'Patient'}</h2>
-            <p className="text-sm text-muted-foreground">
-              CC: {chiefComplaint || 'General assessment'}
-            </p>
+            <div className="flex flex-col gap-0.5 text-sm text-muted-foreground">
+              {patientDOB && (
+                <span>DOB: {new Date(patientDOB).toLocaleDateString()}</span>
+              )}
+              <span>CC: {chiefComplaint || 'General assessment'}</span>
+            </div>
           </div>
           <div className="flex items-center gap-2">
             {brief && (
@@ -297,19 +303,19 @@ export default function UnifiedClinicalAnalysis({
 
         {/* SAFETY ALERTS - Always at top, highly visible */}
         {(brief?.safetyAlerts?.length > 0 || dataSources?.detected_alerts?.length > 0) && (
-          <Card className="border-2 border-red-500 bg-red-50 dark:bg-red-950/20">
+          <Card className="border border-destructive/50 bg-destructive/5 dark:bg-destructive/10">
             <CardContent className="py-3">
               <div className="flex items-start gap-3">
-                <AlertTriangle className="h-5 w-5 text-red-600 mt-0.5 flex-shrink-0" />
+                <AlertTriangle className="h-5 w-5 text-destructive mt-0.5 flex-shrink-0" />
                 <div className="space-y-1">
                   {dataSources?.detected_alerts?.map((alert, i) => (
-                    <div key={`detected-${i}`} className="text-sm font-medium text-red-800 dark:text-red-200">
+                    <div key={`detected-${i}`} className="text-sm font-medium text-destructive dark:text-red-400">
                       <Badge variant="destructive" className="mr-2 text-xs">{alert.priority}</Badge>
                       {alert.title}
                     </div>
                   ))}
                   {brief?.safetyAlerts?.map((alert, i) => (
-                    <div key={`brief-${i}`} className="text-sm text-red-700 dark:text-red-300">
+                    <div key={`brief-${i}`} className="text-sm text-destructive/90 dark:text-red-300">
                       {alert}
                     </div>
                   ))}
@@ -354,7 +360,7 @@ export default function UnifiedClinicalAnalysis({
                     <ul className="space-y-1">
                       {brief.actionableRecommendations.slice(0, 4).map((rec, i) => (
                         <li key={i} className="flex items-start gap-2 text-sm">
-                          <span className="text-green-600 mt-0.5">→</span>
+                          <span className="text-success mt-0.5">→</span>
                           <span>{rec}</span>
                         </li>
                       ))}
@@ -444,11 +450,11 @@ export default function UnifiedClinicalAnalysis({
                       <div
                         key={i}
                         className={`flex items-center justify-between text-sm px-2 py-1 rounded ${
-                          lab.abnormal ? 'bg-amber-100 dark:bg-amber-900/30' : ''
+                          lab.abnormal ? 'bg-warning/10 text-warning-foreground' : ''
                         }`}
                       >
                         <span className={lab.abnormal ? 'font-medium' : ''}>{lab.name}</span>
-                        <span className={`font-mono ${lab.abnormal ? 'text-amber-700 dark:text-amber-400 font-bold' : ''}`}>
+                        <span className={`font-mono ${lab.abnormal ? 'text-warning font-bold' : ''}`}>
                           {lab.value} {lab.unit && <span className="text-xs text-muted-foreground">{lab.unit}</span>}
                           {lab.abnormal && <span className="ml-1">⚠</span>}
                         </span>
@@ -480,7 +486,7 @@ export default function UnifiedClinicalAnalysis({
                         </div>
                         <div className="text-xs text-muted-foreground">{med.dose} {med.frequency}</div>
                         {med.notes && (
-                          <div className="text-xs text-amber-600">{med.notes}</div>
+                          <div className="text-xs text-warning">{med.notes}</div>
                         )}
                       </div>
                     ))}

@@ -98,6 +98,7 @@ export default function PatientDetail() {
             <UnifiedClinicalAnalysis
               patientId={patient.id}
               patientName={patient.full_name}
+              patientDOB={patient.dob}
             />
           </TabsContent>
 

@@ -253,7 +253,7 @@ export default function ClinicalBriefTab({
 
       <div className="grid gap-6">
         {/* Summary */}
-        <Card className="card-healthcare border-l-4 border-l-primary">
+        <Card className="card-healthcare">
           <CardHeader className="pb-2">
             <CardTitle className="text-lg flex items-center justify-between gap-2">
               <div className="flex items-center gap-2">
@@ -276,7 +276,7 @@ export default function ClinicalBriefTab({
 
         {/* Safety Alerts - Always show first if present (but after banner) */}
         {brief.safetyAlerts && brief.safetyAlerts.length > 0 && (
-          <Card className="card-healthcare border-l-4 border-l-destructive bg-destructive/5">
+          <Card className="card-healthcare bg-destructive/5">
             <CardHeader className="pb-2">
               <CardTitle className="text-lg flex items-center justify-between gap-2">
                 <div className="flex items-center gap-2 text-destructive">
@@ -305,7 +305,7 @@ export default function ClinicalBriefTab({
 
         {/* Clinical Insights */}
         {brief.clinicalInsights && brief.clinicalInsights.length > 0 && (
-          <Card className="card-healthcare border-l-4 border-l-warning">
+          <Card className="card-healthcare">
             <CardHeader className="pb-2">
               <CardTitle className="text-lg flex items-center justify-between gap-2">
                 <div className="flex items-center gap-2">
@@ -363,7 +363,7 @@ export default function ClinicalBriefTab({
 
         {/* Actionable Recommendations */}
         {brief.actionableRecommendations && brief.actionableRecommendations.length > 0 && (
-          <Card className="card-healthcare border-l-4 border-l-primary">
+          <Card className="card-healthcare">
             <CardHeader className="pb-2">
               <CardTitle className="text-lg flex items-center justify-between gap-2">
                 <div className="flex items-center gap-2">
@@ -510,7 +510,7 @@ export default function ClinicalBriefTab({
 
         {/* Missing Info */}
         {brief.missingInfo && brief.missingInfo.length > 0 && (
-          <Card className="card-healthcare border-l-4 border-l-muted-foreground">
+          <Card className="card-healthcare">
             <CardHeader className="pb-2">
               <CardTitle className="text-lg flex items-center gap-2 text-muted-foreground">
                 <AlertTriangle className="h-5 w-5" />
