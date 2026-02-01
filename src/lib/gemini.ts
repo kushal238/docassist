@@ -1,4 +1,11 @@
 import { BriefContent, SOAPNote } from "./api";
+import {
+  evaluateClinicalBrief,
+  summarizeEvaluations,
+  flagForHumanReview,
+  EvalResult,
+  EvaluationSummary,
+} from "./evaluations";
 
 // Keywords AI Gateway - OpenAI-compatible chat completions endpoint
 const KEYWORDS_AI_URL = "https://api.keywordsai.co/api/chat/completions";
@@ -19,7 +26,12 @@ async function callKeywordsAI(
   model: string = DEFAULT_MODEL,
   metadata: RequestMetadata = {}
 ): Promise<string> {
-  if (!import.meta.env.VITE_KEYWORDS_AI_API_KEY) {
+  // Support both Vite (import.meta.env) and Node.js (process.env)
+  const apiKey = typeof import.meta !== 'undefined' && import.meta.env
+    ? import.meta.env.VITE_KEYWORDS_AI_API_KEY
+    : process.env.VITE_KEYWORDS_AI_API_KEY;
+
+  if (!apiKey) {
     throw new Error("VITE_KEYWORDS_AI_API_KEY is not set in .env");
   }
 
@@ -28,7 +40,7 @@ async function callKeywordsAI(
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${import.meta.env.VITE_KEYWORDS_AI_API_KEY}`,
+        Authorization: `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
         model,
@@ -114,6 +126,52 @@ ADDITIONAL NOTES: ${clinicalNotes || "None"}`;
     console.error("Brief generation error:", error);
     throw new Error("Failed to generate clinical brief");
   }
+}
+
+// ============================================
+// Clinical Brief Generation WITH Evaluations
+// ============================================
+
+export interface BriefWithQuality {
+  brief: BriefContent;
+  evaluations: EvalResult[];
+  summary: EvaluationSummary;
+}
+
+export async function generateGeminiBriefWithEval(
+  patientContext: string,
+  chiefComplaint?: string,
+  clinicalNotes?: string,
+  metadata?: RequestMetadata
+): Promise<BriefWithQuality> {
+  // Step 1: Generate the clinical brief (existing function)
+  const brief = await generateGeminiBrief(
+    patientContext,
+    chiefComplaint,
+    clinicalNotes,
+    metadata
+  );
+
+  // Step 2: Run evaluations asynchronously (non-blocking for user)
+  const evaluations = await evaluateClinicalBrief(
+    brief,
+    patientContext,
+    metadata
+  );
+
+  // Step 3: Summarize evaluation results
+  const summary = summarizeEvaluations(evaluations);
+
+  // Step 4: Flag for human review if needed
+  if (summary.needsReview) {
+    await flagForHumanReview(brief, evaluations, metadata);
+  }
+
+  return {
+    brief,
+    evaluations,
+    summary,
+  };
 }
 
 // ============================================
