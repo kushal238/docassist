@@ -1,0 +1,136 @@
+Generate a Tiered Differential clinical assessment from this extracted patient data.
+
+EXTRACTED DATA:
+{{clinical_lens_output}}
+
+CHIEF COMPLAINT:
+{{chief_complaint}}
+
+---
+
+EXAMPLE 1: High-acuity cardiac (emergent)
+
+Input extraction:
+{"complaint":{"stated":"substernal pressure","onset":"2 hours ago","severity":"6/10","character":"pressure","location":"substernal","radiation":"left arm","associated":["diaphoresis"]},"history":{"relevant_conditions":["hypertension","type 2 diabetes","former smoker"],"family":["father MI at age 62"]},"meds":{"current":[{"drug":"metformin","dose":"500mg","freq":"BID"},{"drug":"lisinopril","dose":"10mg","freq":"daily"}],"allergies":[]},"vitals":{"bp":"158/92","hr":88,"spo2":"97%"},"red_flags":[{"flag":"chest pressure with diaphoresis and radiation","severity":"critical"}],"pertinent_negatives":["denies shortness of breath"],"risk_factors":["male 58yo","hypertension","diabetes","former smoker","family history MI"],"gaps":["EKG","troponin"],"confidence":"high"}
+
+Chief complaint: chest pain
+
+Output:
+{
+  "assessment_summary": "58yo male with HTN, DM2, smoking history presenting with 2hr substernal pressure with radiation and diaphoresis, highly concerning for ACS",
+  "data_quality": {
+    "extraction_confidence": "high",
+    "critical_gaps": ["EKG", "troponin"],
+    "limitations": null
+  },
+  "differential": {
+    "most_likely": [
+      {
+        "diagnosis": "Acute Coronary Syndrome (NSTEMI/UA)",
+        "confidence": 0.80,
+        "supporting": ["Substernal pressure", "Radiation to left arm", "Diaphoresis", "Multiple cardiac risk factors", "Critical red flag identified"],
+        "against": ["Stable vitals", "Denies dyspnea"],
+        "next_steps": ["Stat EKG", "Troponin", "Aspirin 325mg", "Cardiology consult"]
+      }
+    ],
+    "expanded": [
+      {
+        "diagnosis": "GERD/Esophageal spasm",
+        "confidence": 0.15,
+        "supporting": ["Substernal location"],
+        "why_less_likely": "Radiation pattern and diaphoresis atypical"
+      }
+    ],
+    "cant_miss": [
+      {
+        "diagnosis": "STEMI",
+        "urgency": "Critical",
+        "rule_out": "Immediate 12-lead EKG",
+        "red_flags_present": ["chest pressure with diaphoresis and radiation"],
+        "time_sensitive": true
+      },
+      {
+        "diagnosis": "Aortic Dissection",
+        "urgency": "Critical",
+        "rule_out": "BP both arms, CXR, CT angiography if suspected",
+        "red_flags_present": ["Hypertension", "Acute chest pain"],
+        "time_sensitive": true
+      }
+    ]
+  },
+  "reasoning_trace": "CLINICAL REASONING:\n\n1. PATTERN RECOGNITION: Classic anginal presentation - substernal pressure (onset 2hrs ago), left arm radiation, diaphoresis.\n\n2. RISK STRATIFICATION: High-risk with 5+ cardiac risk factors: HTN (dx: PCP), DM2 (dx: PCP), former smoker, family hx MI at 62.\n\n3. EVIDENCE WEIGHTING: Strong positive case for ACS. BP elevated (158/92, today). Troponin pending.\n\n4. PERTINENT NEGATIVES: Denies dyspnea - noted but doesn't exclude ACS.\n\n5. CAN'T MISS: STEMI and dissection require immediate rule-out. EKG critical.",
+  "plan": {
+    "immediate": ["Stat 12-lead EKG", "IV access", "Aspirin 325mg", "Cardiac monitoring"],
+    "workup": ["Troponin serial q3h", "CXR", "BMP"],
+    "monitoring": ["Continuous telemetry", "VS q15min"],
+    "disposition": "ED resuscitation bay → CCU pending results"
+  },
+  "risk_summary": {
+    "overall_risk": "High",
+    "urgency": "Emergent",
+    "confidence": 0.85
+  }
+}
+
+---
+
+EXAMPLE 2: Low-acuity with sparse data
+
+Input extraction:
+{"complaint":{"stated":"headache","onset":"3 days ago","severity":null,"character":null,"location":null,"radiation":null,"associated":[]},"history":{"relevant_conditions":[],"family":[]},"meds":{"current":[],"allergies":[]},"vitals":{"bp":null,"hr":null,"spo2":null},"red_flags":[],"pertinent_negatives":[],"risk_factors":[],"gaps":["headache character","severity","vitals","PMH","neuro exam"],"confidence":"low"}
+
+Chief complaint: headache
+
+Output:
+{
+  "assessment_summary": "Patient with 3-day headache, insufficient data for confident diagnosis",
+  "data_quality": {
+    "extraction_confidence": "low",
+    "critical_gaps": ["Headache character/severity", "Vitals", "Neuro symptoms", "PMH"],
+    "limitations": "Data insufficient for confident differential"
+  },
+  "differential": {
+    "most_likely": [
+      {
+        "diagnosis": "Primary Headache (Tension-type vs Migraine)",
+        "confidence": 0.40,
+        "supporting": ["3-day duration suggests non-emergent"],
+        "against": ["Cannot characterize without more data"],
+        "next_steps": ["Complete headache history", "Vital signs", "Neuro exam"]
+      }
+    ],
+    "expanded": [],
+    "cant_miss": [
+      {
+        "diagnosis": "Subarachnoid Hemorrhage",
+        "urgency": "Critical",
+        "rule_out": "Ask about thunderclap onset. If positive → CT head",
+        "red_flags_present": [],
+        "time_sensitive": true
+      },
+      {
+        "diagnosis": "Meningitis",
+        "urgency": "Critical",
+        "rule_out": "Assess fever, neck stiffness",
+        "red_flags_present": [],
+        "time_sensitive": true
+      }
+    ]
+  },
+  "reasoning_trace": "CLINICAL REASONING:\n\n1. DATA QUALITY: LOW confidence extraction. Onset documented (3 days ago) but character, severity, vitals all missing.\n\n2. PROVISIONAL: Likely primary headache but 0.40 confidence due to data gaps.\n\n3. RED FLAG SCREENING INCOMPLETE: No vitals, no neuro exam, no PMH. Must assess for SAH (thunderclap?), meningitis (fever? neck stiffness?) before any treatment.",
+  "plan": {
+    "immediate": ["Complete headache history", "Vital signs", "Neuro exam"],
+    "workup": ["CT head if any red flags"],
+    "monitoring": ["Reassess after complete evaluation"],
+    "disposition": "Cannot determine until red flags assessed"
+  },
+  "risk_summary": {
+    "overall_risk": "Indeterminate",
+    "urgency": "Semi-urgent",
+    "confidence": 0.40
+  }
+}
+
+---
+
+Return ONLY valid JSON for the input provided.
