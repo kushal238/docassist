@@ -10,7 +10,8 @@ import {
   FileText, 
   Loader2, 
   ChevronRight,
-  CheckCircle2
+  CheckCircle2,
+  Mic
 } from 'lucide-react';
 import {
   Select,
@@ -22,6 +23,7 @@ import {
 import { format } from 'date-fns';
 import { toast } from 'sonner';
 import { ingestDocument } from '@/lib/api';
+import VoiceSymptomIntake, { SymptomSummary } from '@/components/patient/VoiceSymptomIntake';
 
 interface Patient {
   id: string;
@@ -45,6 +47,7 @@ export default function PatientDashboard() {
   const [documents, setDocuments] = useState<Document[]>([]);
   const [uploading, setUploading] = useState(false);
   const [docType, setDocType] = useState<string>('note');
+  const [voiceIntakeOpen, setVoiceIntakeOpen] = useState(false);
 
   useEffect(() => {
     fetchPatientData();
@@ -159,6 +162,32 @@ export default function PatientDashboard() {
     return labels[type] || type;
   };
 
+  const handleSymptomSubmit = async (summary: SymptomSummary) => {
+    if (!patient || !profile?.id) {
+      toast.error('Patient information not available');
+      return;
+    }
+
+    try {
+      // Store the structured symptom summary in the briefs table as JSONB
+      const { error } = await supabase
+        .from('briefs')
+        .insert({
+          patient_id: patient.id,
+          created_by_profile_id: profile.id,
+          content_json: summary,
+        });
+
+      if (error) throw error;
+
+      toast.success('Symptom summary submitted successfully. Your doctor will review it.');
+      fetchPatientData(); // Refresh data if needed
+    } catch (error) {
+      console.error('Error submitting symptom summary:', error);
+      toast.error('Failed to submit symptom summary. Please try again.');
+    }
+  };
+
   if (loading) {
     return (
       <PatientLayout>
@@ -177,6 +206,29 @@ export default function PatientDashboard() {
           <p className="text-muted-foreground">
             Upload and manage your health records
           </p>
+        </div>
+
+        {/* Voice Symptom Intake Button */}
+        <div className="mb-6">
+          <Card className="card-healthcare">
+            <CardContent className="pt-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="text-lg font-semibold mb-1">Report Symptoms</h3>
+                  <p className="text-sm text-muted-foreground">
+                    Use your voice to describe your symptoms quickly and accurately
+                  </p>
+                </div>
+                <Button
+                  onClick={() => setVoiceIntakeOpen(true)}
+                  className="flex items-center gap-2"
+                >
+                  <Mic className="h-4 w-4" />
+                  Start Voice Symptom Check
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
         </div>
 
         <div className="grid md:grid-cols-2 gap-6">
@@ -280,6 +332,12 @@ export default function PatientDashboard() {
           </Card>
         </div>
       </div>
+
+      <VoiceSymptomIntake
+        open={voiceIntakeOpen}
+        onClose={() => setVoiceIntakeOpen(false)}
+        onSubmit={handleSymptomSubmit}
+      />
     </PatientLayout>
   );
 }
