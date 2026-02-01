@@ -830,9 +830,9 @@ export default function UnifiedClinicalAnalysis({
               </div>
             )}
 
-            {/* Patient Documents & Symptoms - Side by Side */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              {/* Documents - Left Side */}
+            {/* Patient Documents & Symptom Reports - Stacked */}
+            <div className="space-y-3">
+              {/* Documents */}
               <Card>
                 <CardHeader className="py-2 px-3">
                   <CardTitle className="text-xs font-medium text-muted-foreground uppercase tracking-wide flex items-center justify-between">
@@ -914,7 +914,7 @@ export default function UnifiedClinicalAnalysis({
                 </CardContent>
               </Card>
 
-              {/* Symptom Reports - Right Side */}
+              {/* Symptom Reports */}
               <Card>
                 <CardHeader className="py-2 px-3">
                   <CardTitle className="text-xs font-medium text-muted-foreground uppercase tracking-wide flex items-center gap-1">
