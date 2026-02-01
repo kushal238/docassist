@@ -2,11 +2,15 @@
 
 ## Overview
 
-This document outlines how DocAdvisor will integrate Keywords AI to achieve production-grade observability, reliability, and control over our LLM-powered clinical features.
+This document outlines how DocAdvisor integrates Keywords AI to achieve production-grade observability, reliability, and control over our LLM-powered clinical features.
 
-**Current State**: Direct Gemini API calls from client-side (`src/lib/gemini.ts`)
+**Current State**: Keywords AI integrated with managed prompts and 4-stage clinical pipeline
 
-**Target State**: All LLM operations routed through Keywords AI with full observability
+**Key Files**:
+- `src/lib/gemini.ts` - Core LLM gateway functions
+- `src/lib/clinical-pipeline.ts` - 4-stage managed prompt pipeline
+- `src/hooks/useClinicalPipeline.ts` - React hook for pipeline
+- `src/components/doctor/DeepAnalysisTab.tsx` - Pipeline UI component
 
 ---
 
@@ -14,90 +18,143 @@ This document outlines how DocAdvisor will integrate Keywords AI to achieve prod
 
 ### Use Case
 
-Replace direct Gemini SDK calls with Keywords AI's unified gateway to gain:
+All LLM operations are routed through Keywords AI's unified gateway to gain:
 
 - **Multi-model routing**: Switch between Gemini, Claude, GPT-4 without code changes
 - **Automatic fallback**: If Gemini fails/rate-limits, automatically try Claude
 - **Cost control**: Set budgets, track spend per feature
 - **Single API key**: No provider keys exposed in frontend
+- **Managed Prompts**: All prompts stored in Keywords AI dashboard
 
 ### Current Implementation
 
 ```typescript
-// src/lib/gemini.ts (current)
-import { GoogleGenerativeAI } from "@google/generative-ai";
+// src/lib/gemini.ts - Core gateway wrapper
+const KEYWORDS_AI_URL = "https://api.keywordsai.co/api/chat/completions";
 
-async function runGemini(prompt: string): Promise<string> {
-  const genAI = new GoogleGenerativeAI(apiKey);  // Direct Gemini
-  const model = genAI.getGenerativeModel({ model: "gemini-1.5-pro" });
-  const result = await model.generateContent(prompt);
-  return result.response.text();
-}
-```
-
-### New Implementation
-
-```typescript
-// src/lib/keywords-ai.ts (new)
-
-const KEYWORDS_AI_URL = 'https://api.keywordsai.co/api/chat/completions';
-const KEYWORDS_AI_KEY = import.meta.env.VITE_KEYWORDS_AI_API_KEY;
-
-interface ChatCompletionRequest {
-  model: string;
-  messages: { role: string; content: string }[];
-  fallback_models?: string[];
-  customer_identifier?: string;
-  metadata?: Record<string, any>;
-}
-
-export async function callLLM(
-  messages: { role: string; content: string }[],
-  options: {
-    model?: string;
-    fallbackModels?: string[];
-    patientId?: string;
-    feature?: string;
-  } = {}
+async function callKeywordsAI(
+  messages: { role: "system" | "user" | "assistant"; content: string }[],
+  model: string = DEFAULT_MODEL,
+  metadata: RequestMetadata = {}
 ): Promise<string> {
-  const {
-    model = 'gemini/gemini-1.5-pro',
-    fallbackModels = ['anthropic/claude-3-5-sonnet'],
-    patientId,
-    feature
-  } = options;
-
   const response = await fetch(KEYWORDS_AI_URL, {
-    method: 'POST',
+    method: "POST",
     headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${KEYWORDS_AI_KEY}`,
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${import.meta.env.VITE_KEYWORDS_AI_API_KEY}`,
     },
     body: JSON.stringify({
       model,
       messages,
-      fallback_models: fallbackModels,
-      customer_identifier: patientId,
-      metadata: { feature, app: 'docadvisor' }
+      extra_body: {
+        customer_identifier: metadata.patientId || "anonymous",
+        thread_identifier: metadata.sessionId,
+        metadata: { feature: metadata.feature, app: "docadvisor" },
+      },
     }),
   });
-
-  if (!response.ok) {
-    throw new Error(`Keywords AI error: ${response.status}`);
-  }
-
-  const data = await response.json();
-  return data.choices[0].message.content;
+  // ...
 }
 ```
 
-### Migration Steps
+---
 
-1. Create `src/lib/keywords-ai.ts` with gateway wrapper
-2. Add `VITE_KEYWORDS_AI_API_KEY` to environment
-3. Update `generateGeminiBrief()` to use `callLLM()`
-4. Update `generateGeminiChat()` to use `callLLM()`
-5. Update `generateGeminiSOAP()` to use `callLLM()`
+## 2. Clinical Pipeline (Managed Prompts)
+
+### Overview
+
+The 4-stage clinical pipeline uses **managed prompts** stored in Keywords AI, called by ID rather than embedding prompt text in code.
+
+### Pipeline Stages
+
+| Stage | Prompt ID | Input | Output |
+|-------|-----------|-------|--------|
+| 1. History Extraction | `docassist_history_extraction` | raw_notes | Structured JSON |
+| 2. Relevance Filtering | `docassist_relevance_filtering` | history_json, complaint | Filtered findings |
+| 3. Clinical Reasoning | `docassist_clinical_reasoning` | filtered_data, complaint | CoT reasoning |
+| 4. Synthesis | `docassist_synthesis` | reasoning_chain | Final report |
+
+### Managed Prompt Pattern
+
+```typescript
+// src/lib/clinical-pipeline.ts
+// NO prompt text in code - all prompts managed in Keywords AI dashboard
+
+const response = await fetch(KEYWORDS_AI_URL, {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json',
+    'Authorization': `Bearer ${apiKey}`,
+  },
+  body: JSON.stringify({
+    model: 'gpt-4o',  // Placeholder; actual model defined in Keywords AI
+    messages: [{ role: 'user', content: '-' }],  // Required schema placeholder
+    extra_body: {
+      prompt: {
+        prompt_id: 'docassist_history_extraction',  // Managed prompt ID
+        variables: { raw_notes: rawNotes },  // Variables injected into prompt
+      },
+    },
+  }),
+});
+```
+
+### React Hook Usage
+
+```tsx
+import { useClinicalPipeline } from '@/hooks/useClinicalPipeline';
+
+function MyComponent() {
+  const { result, isLoading, error, runAnalysis } = useClinicalPipeline();
+
+  const handleAnalyze = async () => {
+    await runAnalysis(patientNotes, "Chest pain");
+  };
+
+  if (result) {
+    // result.finalReport - Physician-facing summary
+    // result.traceData - Intermediate reasoning steps
+    // result.metadata - Execution info (trace IDs, timing)
+  }
+}
+```
+
+### Setting Up Prompts in Keywords AI
+
+1. Go to Keywords AI Dashboard → Prompts
+2. Create each prompt with the exact `prompt_id`:
+   - `docassist_history_extraction`
+   - `docassist_relevance_filtering`
+   - `docassist_clinical_reasoning`
+   - `docassist_synthesis`
+3. Define variables in each prompt template using `{{variable_name}}` syntax
+4. Select model and parameters in the UI
+
+### Example Prompt Template (in Keywords AI)
+
+**Prompt ID**: `docassist_history_extraction`
+
+```
+You are a medical data extraction assistant. Extract structured history from the following patient notes.
+
+RAW NOTES:
+{{raw_notes}}
+
+Return a JSON object with the following structure:
+{
+  "demographics": { ... },
+  "conditions": [ ... ],
+  "medications": [ ... ],
+  "allergies": [ ... ],
+  "vitals": { ... },
+  "labs": [ ... ],
+  "symptoms": [ ... ]
+}
+```
+
+---
+
+## 3. Migration Steps
 6. Configure fallback models in Keywords AI dashboard
 
 ### Files Affected
@@ -606,3 +663,89 @@ After integration, we should see in Keywords AI dashboard:
 - **> 0.85** average faithfulness score
 - **> 0.90** average safety score
 - **Cost tracking** per feature and per patient
+
+---
+
+## ADDENDUM: Multi-Stage Clinical Pipeline
+
+### Advanced Implementation: 4-Stage Clinical Analysis
+
+The standard Keywords AI integration described above treats each medical function (brief, chat, SOAP) as a single LLM call. For production-grade clinical applications, we can implement a sophisticated **multi-stage pipeline** that separates extraction, filtering, reasoning, and synthesis.
+
+### Pipeline Architecture
+
+```
+Raw Patient Data → [Stage 1: Extract] → [Stage 2: Filter] → [Stage 3: Reason] → [Stage 4: Synthesize] → Clinical Output
+```
+
+This approach enables:
+- **Maintainable Logic**: Update reasoning without affecting synthesis tone
+- **Precise Debugging**: Identify exactly which stage failed  
+- **Version Control**: Each stage has independent prompt versions
+- **Observability**: Trace decision-making through each step
+
+### Implementation Files
+
+The multi-stage pipeline is implemented in:
+
+- `src/lib/keywords-pipeline.ts` - Core pipeline orchestration
+- `src/components/doctor/KeywordsAISetup.tsx` - Setup UI for prompt templates
+- `src/pages/KeywordsSetupPage.tsx` - Configuration page
+- Enhanced `src/lib/api.ts` - Integration with existing chat system
+
+### Stage-by-Stage Breakdown
+
+#### Stage 1: Clinical History Extraction
+- **Goal**: Convert unstructured notes to structured JSON
+- **Model**: GPT-4o (fast, structured output)
+- **Prompt ID**: `clinical_history_extraction`
+- **Output**: `{ conditions: [], medications: [], symptoms: [], labs: [], allergies: [] }`
+
+#### Stage 2: Relevance Filtering  
+- **Goal**: Identify history relevant to current complaint
+- **Model**: GPT-4o (good reasoning)
+- **Prompt ID**: `relevance_filtering`
+- **Technique**: Few-shot examples (versioned independently)
+- **Output**: Filtered history with confidence scores
+
+#### Stage 3: Clinical Reasoning (CoT)
+- **Goal**: Chain-of-thought clinical analysis
+- **Model**: Claude-3-Opus (best reasoning)
+- **Prompt ID**: `clinical_reasoning_cot`
+- **Output**: Step-by-step reasoning chain, differentials, risk factors
+
+#### Stage 4: Synthesis & Physician Output
+- **Goal**: Concise, actionable clinical summary
+- **Model**: GPT-4o-mini (fast formatting)
+- **Prompt ID**: `synthesis_physician_output`  
+- **Output**: Final physician-ready response with citations
+
+### Setup Process
+
+1. **Environment**: Add `VITE_KEYWORDS_AI_API_KEY` to your environment
+2. **Dashboard**: Navigate to `/doctor/keywords-setup` in the application
+3. **Prompts**: Copy the 4 prompt templates into your Keywords AI dashboard
+4. **Testing**: The pipeline automatically activates when the API key is detected
+
+### Debugging Advantages
+
+When a doctor reports "The analysis missed the patient's cardiac risk factors":
+
+1. **Before**: Debug entire prompt, unsure which part failed
+2. **After**: Check Keywords AI trace:
+   - Stage 1: ✅ Extracted "Hypertension, Diabetes" correctly  
+   - Stage 2: ❌ Filtered out cardiac conditions as "irrelevant"
+   - Stage 3: ✅ Reasoning would have been correct with proper input
+   - Stage 4: ✅ Synthesis worked fine
+
+**Fix**: Update Stage 2 prompt to better recognize cardiac relevance patterns. Deploy immediately via Keywords dashboard without code changes.
+
+### Graceful Degradation
+
+The pipeline includes comprehensive error handling:
+- If Keywords AI is unavailable → Falls back to Gemini client
+- If any stage fails → Provides partial response with clear error context  
+- If JSON parsing fails → Returns structured fallback response
+- Each failure is logged for later analysis
+
+This multi-stage approach transforms DocAdvisor from a "simple chat bot" into a production-grade clinical decision support system with full observability and maintainability.
