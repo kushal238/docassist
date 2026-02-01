@@ -270,11 +270,14 @@ export default function AnalysisChatbot({
       
       if (cl) {
         context += `=== DEEP ANALYSIS - CLINICAL LENS ===\n`;
-        if (cl.relevant_history?.length) context += `History: ${cl.relevant_history.join(', ')}\n`;
-        if (cl.current_medications?.length) context += `Extracted Medications: ${cl.current_medications.join(', ')}\n`;
-        if (cl.red_flags?.length) context += `Red Flags: ${cl.red_flags.join(', ')}\n`;
+        if (cl.complaint?.stated) context += `Chief Complaint: ${cl.complaint.stated}\n`;
+        if (cl.complaint?.onset) context += `Onset: ${cl.complaint.onset}\n`;
+        if (cl.complaint?.severity) context += `Severity: ${cl.complaint.severity}\n`;
+        if (cl.history?.relevant_conditions?.length) context += `Relevant Conditions: ${cl.history.relevant_conditions.join(', ')}\n`;
+        if (cl.meds?.current?.length) context += `Current Medications: ${cl.meds.current.map(m => `${m.drug} ${m.dose}`).join(', ')}\n`;
+        if (cl.red_flags?.length) context += `Red Flags: ${cl.red_flags.map(rf => rf.flag).join(', ')}\n`;
         if (cl.risk_factors?.length) context += `Risk Factors: ${cl.risk_factors.join(', ')}\n`;
-        if (cl.symptom_timeline) context += `Timeline: ${cl.symptom_timeline}\n`;
+        if (cl.pertinent_negatives?.length) context += `Pertinent Negatives: ${cl.pertinent_negatives.join(', ')}\n`;
         context += `\n`;
       }
       
@@ -296,10 +299,12 @@ export default function AnalysisChatbot({
           });
         }
         
-        if (de.suggested_plan) {
-          context += `Suggested Plan:\n`;
-          if (de.suggested_plan.immediate?.length) context += `  Immediate: ${de.suggested_plan.immediate.join(', ')}\n`;
-          if (de.suggested_plan.short_term?.length) context += `  Short-term: ${de.suggested_plan.short_term.join(', ')}\n`;
+        if (de.plan) {
+          context += `Plan:\n`;
+          if (de.plan.immediate?.length) context += `  Immediate: ${de.plan.immediate.join(', ')}\n`;
+          if (de.plan.workup?.length) context += `  Workup: ${de.plan.workup.join(', ')}\n`;
+          if (de.plan.monitoring?.length) context += `  Monitoring: ${de.plan.monitoring.join(', ')}\n`;
+          if (de.plan.disposition) context += `  Disposition: ${de.plan.disposition}\n`;
         }
       }
     }

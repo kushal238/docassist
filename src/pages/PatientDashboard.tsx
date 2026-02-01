@@ -169,16 +169,96 @@ export default function PatientDashboard() {
     }
 
     try {
-      // Store the structured symptom summary in the briefs table as JSONB
-      const { error } = await supabase
-        .from('briefs')
+      // Format transcript with line breaks for readability
+      const formattedTranscript = summary.transcript
+        .split(/(?<=[.!?])\s+/)
+        .join('\n\n');
+
+      const fullReport = `PATIENT SYMPTOM REPORT
+${'='.repeat(50)}
+
+PRIMARY COMPLAINT
+${summary.primarySymptom}
+
+TIMELINE & SEVERITY
+• Onset: ${summary.onset}
+• Severity: ${summary.severity ? `${summary.severity}/10` : 'Not specified'}
+• Progression: ${summary.progression}
+
+ASSOCIATED SYMPTOMS
+${summary.associatedSymptoms?.length > 0 ? summary.associatedSymptoms.map(s => `• ${s}`).join('\n') : '• None reported'}
+
+RED FLAGS SCREENING
+${summary.redFlags?.fever ? '⚠️ FEVER - YES' : '✓ Fever - No'}
+${summary.redFlags?.chestPain ? '⚠️ CHEST PAIN - YES' : '✓ Chest Pain - No'}
+${summary.redFlags?.breathingDifficulty ? '⚠️ BREATHING DIFFICULTY - YES' : '✓ Breathing Difficulty - No'}
+${summary.redFlags?.confusion ? '⚠️ CONFUSION - YES' : '✓ Confusion - No'}
+${summary.redFlags?.fainting ? '⚠️ FAINTING - YES' : '✓ Fainting - No'}
+
+${'='.repeat(50)}
+PATIENT'S OWN WORDS
+${'='.repeat(50)}
+
+${formattedTranscript}
+
+${'='.repeat(50)}
+Submitted: ${summary.timestamp}
+Source: ${summary.source}`;
+
+      // Store in the new symptom_reports table (use type assertion since table is new)
+      const { error: reportError } = await (supabase as any)
+        .from('symptom_reports')
         .insert({
           patient_id: patient.id,
           created_by_profile_id: profile.id,
-          content_json: summary,
+          primary_symptom: summary.primarySymptom,
+          onset_text: summary.onset,
+          severity: summary.severity,
+          progression: summary.progression,
+          associated_symptoms: summary.associatedSymptoms || [],
+          red_flags: summary.redFlags,
+          full_transcript: formattedTranscript,
+          full_report: fullReport,
+          summary_data: summary,
         });
 
-      if (error) throw error;
+      if (reportError) throw reportError;
+
+      // Also store the primary symptom in the symptoms table for doctor's quick view
+      if (summary.primarySymptom) {
+        const { error: symptomError } = await supabase
+          .from('symptoms')
+          .insert({
+            patient_id: patient.id,
+            description: summary.primarySymptom,
+            severity: summary.severity,
+            onset_date: summary.onset.includes('today') ? new Date().toISOString().split('T')[0] : null,
+          });
+        
+        // Don't fail the whole submission if symptom insert fails
+        if (symptomError) {
+          console.warn('Failed to insert symptom:', symptomError);
+        }
+      }
+
+      // Store associated symptoms as well
+      if (summary.associatedSymptoms?.length > 0) {
+        const associatedSymptomsData = summary.associatedSymptoms.map(symptom => ({
+          patient_id: patient.id,
+          description: `Associated: ${symptom}`,
+          severity: null,
+          onset_date: null,
+        }));
+
+        const { error: associatedError } = await supabase
+          .from('symptoms')
+          .insert(associatedSymptomsData);
+          
+        // Don't fail if this fails either
+        if (associatedError) {
+          console.warn('Failed to insert associated symptoms:', associatedError);
+        }
+      }
 
       toast.success('Symptom summary submitted successfully. Your doctor will review it.');
       fetchPatientData(); // Refresh data if needed
