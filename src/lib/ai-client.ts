@@ -86,25 +86,26 @@ export function getAIClient(): OpenAI {
 }
 
 // =============================================================================
-// Helper for Managed Prompt Calls
+// Unified Prompt Execution
 // =============================================================================
 
 /**
  * Execute a managed prompt via Keywords AI Gateway.
  * 
- * This helper properly types the Keywords AI extension while working around
- * the OpenAI SDK's strict typing.
+ * Unified implementation using fetch for maximum control and compatibility.
+ * Supports all OpenAI parameters while providing access to Keywords AI headers.
  * 
  * @param promptId - The managed prompt ID from Keywords AI dashboard
  * @param variables - Variables to inject into the prompt template
- * @param options - Additional options (model override, etc.)
- * @returns The completion response with trace ID
+ * @param options - Additional options for model, temperature, tokens, etc.
+ * @returns Content, trace ID, and metadata
  * 
  * @example
  * ```ts
  * const { content, traceId } = await executePrompt(
- *   'docassist_history_extraction',
- *   { raw_notes: patientNotes }
+ *   '880547ac767343f88b93cbb1855a3eba',
+ *   { raw_notes: patientNotes },
+ *   { model: 'claude-3-haiku-20240307', temperature: 0.7 }
  * );
  * ```
  */
@@ -115,28 +116,34 @@ export async function executePrompt(
     model?: string;
     temperature?: number;
     maxTokens?: number;
+    debug?: boolean;
   } = {}
-): Promise<{ content: string; traceId: string | null; raw: OpenAI.Chat.ChatCompletion }> {
-  const client = getAIClient();
-  
+): Promise<{ content: string; traceId: string | null }> {
+  const apiKey = getApiKey();
   const {
+<<<<<<< Updated upstream
     model = 'gpt-5.2',
+=======
+    model = 'claude-3-haiku-20240307', // Fast, cost-effective default
+>>>>>>> Stashed changes
     temperature,
     maxTokens,
+    debug = false,
   } = options;
 
-  // Build the request with Keywords AI prompt extension
-  const requestBody: KeywordsCreateParams = {
+  // Build request body
+  const requestBody: Record<string, any> = {
     model,
-    messages: [{ role: 'user', content: '-' }], // Required schema placeholder
+    messages: [{ role: 'user', content: 'placeholder' }],
     stream: false,
     prompt: {
       prompt_id: promptId,
       variables,
-      override: true, // CRITICAL: Override placeholder message with managed prompt
+      override: true, // CRITICAL: Override placeholder with managed prompt
     },
   };
 
+  // Add optional parameters
   if (temperature !== undefined) {
     requestBody.temperature = temperature;
   }
@@ -144,21 +151,17 @@ export async function executePrompt(
     requestBody.max_tokens = maxTokens;
   }
 
-  // Execute with type assertion to bypass OpenAI SDK's strict types
-
-  const response = await client.chat.completions.create(requestBody) as OpenAI.Chat.ChatCompletion;
-
-  // Extract trace ID from response (Keywords AI includes this)
-  const traceId = (response as any)._request_id ||
-                  (response as any).id ||
-                  null;
-
-  const content = response.choices[0]?.message?.content;
-  
-  if (!content) {
-    throw new Error(`Empty response from prompt: ${promptId}`);
+  if (debug) {
+    console.log('[AI Client] Request:', {
+      promptId,
+      model,
+      variableKeys: Object.keys(variables),
+      temperature,
+      maxTokens,
+    });
   }
 
+<<<<<<< Updated upstream
   return {
     content: content.trim(),
     traceId,
@@ -188,47 +191,46 @@ export async function executePromptWithHeaders(
   const apiKey = getApiKey();
   const { model = 'gpt-5.2' } = options;
 
+=======
+  // Execute request
+>>>>>>> Stashed changes
   const response = await fetch(`${KEYWORDS_AI_BASE_URL}chat/completions`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       'Authorization': `Bearer ${apiKey}`,
     },
-    body: JSON.stringify({
-      model,
-      messages: [{ role: 'user', content: '-' }],
-      stream: false,
-      prompt: {
-        prompt_id: promptId,
-        variables,
-        override: true, // CRITICAL: Override placeholder message with managed prompt
-      },
-    }),
+    body: JSON.stringify(requestBody),
   });
 
   // Extract trace ID from headers
   const traceId = response.headers.get('x-keywords-trace-id') || 
                   response.headers.get('X-Keywords-Trace-Id');
 
+  // Handle errors
   if (!response.ok) {
     const errorText = await response.text();
-    const error = new PipelineError(
+    throw new PipelineError(
       `Keywords AI error (${response.status}): ${errorText}`,
       promptId,
       traceId
     );
-    throw error;
   }
 
+  // Parse response
   const data = await response.json();
   
-  console.log('[AI Client] Full response object keys:', Object.keys(data));
-  console.log('[AI Client] Response choices:', data.choices?.length);
+  if (debug) {
+    console.log('[AI Client] Response keys:', Object.keys(data));
+    console.log('[AI Client] Choices:', data.choices?.length);
+  }
   
   const content = data.choices?.[0]?.message?.content;
 
   if (!content) {
-    console.error('[AI Client] No content in response:', JSON.stringify(data, null, 2));
+    if (debug) {
+      console.error('[AI Client] Empty response:', JSON.stringify(data, null, 2));
+    }
     throw new PipelineError(
       `Empty response from prompt: ${promptId}`,
       promptId,
@@ -236,14 +238,21 @@ export async function executePromptWithHeaders(
     );
   }
 
-  console.log('[AI Client] Content length:', content.length);
-  console.log('[AI Client] Content preview (first 300 chars):', content.substring(0, 300));
+  if (debug) {
+    console.log('[AI Client] Content length:', content.length);
+    console.log('[AI Client] Preview:', content.substring(0, 200));
+  }
 
   return {
     content: content.trim(),
     traceId: traceId || data.id,
   };
 }
+
+/**
+ * @deprecated Use executePrompt() instead. This alias is kept for backward compatibility.
+ */
+export const executePromptWithHeaders = executePrompt;
 
 // =============================================================================
 // Custom Error Class

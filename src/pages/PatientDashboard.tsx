@@ -22,7 +22,7 @@ import {
 } from '@/components/ui/select';
 import { format } from 'date-fns';
 import { toast } from 'sonner';
-import { ingestDocument } from '@/lib/api';
+import { ingestDocument } from '@/services/document-ingestion';
 import VoiceSymptomIntake, { SymptomSummary } from '@/components/patient/VoiceSymptomIntake';
 
 interface Patient {
@@ -104,15 +104,18 @@ export default function PatientDashboard() {
     const file = e.target.files?.[0];
     if (!file || !patient) return;
 
-    if (file.type !== 'application/pdf') {
-      toast.error('Please upload a PDF file');
+    // Support PDF and text files
+    const supportedTypes = ['application/pdf', 'text/plain'];
+    if (!supportedTypes.includes(file.type) && !file.name.endsWith('.txt')) {
+      toast.error('Please upload a PDF or text file');
       return;
     }
 
     setUploading(true);
     try {
       const documentId = crypto.randomUUID();
-      const storagePath = `patient/${patient.id}/${documentId}.pdf`;
+      const extension = file.name.split('.').pop() || 'pdf';
+      const storagePath = `patient/${patient.id}/${documentId}.${extension}`;
 
       const { error: uploadError } = await supabase.storage
         .from('documents')
@@ -120,6 +123,7 @@ export default function PatientDashboard() {
 
       if (uploadError) throw uploadError;
 
+      // Create document record with 'pending' status initially
       const { error: docError } = await supabase
         .from('documents')
         .insert({
@@ -129,15 +133,18 @@ export default function PatientDashboard() {
           storage_path: storagePath,
           filename: file.name,
           doc_type: docType as 'note' | 'lab' | 'imaging' | 'meds' | 'other',
-          status: 'processed',
+          status: 'pending', // Will be updated to 'processed' after ingestion
         });
 
       if (docError) throw docError;
 
-      toast.success('Document uploaded successfully');
-
-      // Trigger ingestion (mock)
-      ingestDocument(documentId);
+      // Extract plain text and store in doc_chunks (NO Computer Vision)
+      const ingestionResult = await ingestDocument(documentId, patient.id, file);
+      
+      if (!ingestionResult.success) {
+        console.warn('Document uploaded but text extraction had issues:', ingestionResult.error);
+        // Document is still uploaded, just may not have full text extraction
+      }
 
       fetchPatientData();
     } catch (error) {

@@ -13,12 +13,14 @@ import {
   FileText,
   ChevronDown,
   ChevronUp,
+  MessageSquare,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import VoiceClinicalInput from './VoiceClinicalInput';
 import { generateBrief, BriefContent } from '@/lib/api';
 import { runClinicalPipeline, ClinicalPipelineResult } from '@/services/clinical-pipeline';
 import SOAPNoteGenerator from './SOAPNoteGenerator';
+import EditablePipelineResultView from './EditablePipelineResultView';
 import { generateGeminiBriefWithEval } from '@/lib/gemini';
 import type { EvaluationSummary } from '@/lib/evaluations';
 
@@ -45,6 +47,7 @@ export default function UnifiedClinicalAnalysis({
   const [brief, setBrief] = useState<BriefContent | null>(null);
   const [deepAnalysis, setDeepAnalysis] = useState<ClinicalPipelineResult | null>(null);
   const [evaluations, setEvaluations] = useState<EvaluationSummary | null>(null);
+  const [briefId, setBriefId] = useState<string | null>(null);
 
   const [showReasoningDetails, setShowReasoningDetails] = useState(false);
 
@@ -197,7 +200,7 @@ export default function UnifiedClinicalAnalysis({
           );
           setBrief(quickBrief);
 
-          await supabase.from('briefs').insert({
+          const { data: insertedBrief } = await supabase.from('briefs').insert({
             patient_id: patientId,
             created_by_profile_id: profile?.id,
             content_json: JSON.parse(
@@ -208,7 +211,11 @@ export default function UnifiedClinicalAnalysis({
                 chiefComplaint,
               })
             ),
-          });
+          }).select('id').single();
+
+          if (insertedBrief) {
+            setBriefId(insertedBrief.id);
+          }
 
           toast.success('Deep analysis complete');
         } else {
@@ -228,6 +235,7 @@ export default function UnifiedClinicalAnalysis({
     setBrief(null);
     setDeepAnalysis(null);
     setEvaluations(null);
+    setBriefId(null);
     setClinicalNotes('');
     setChiefComplaint('');
   };
@@ -283,8 +291,11 @@ export default function UnifiedClinicalAnalysis({
         </div>
 
         <Tabs defaultValue="summary" className="w-full">
-          <TabsList className="grid w-full grid-cols-3">
+          <TabsList className="grid w-full grid-cols-4">
             <TabsTrigger value="summary">Summary</TabsTrigger>
+            <TabsTrigger value="deep-analysis" disabled={!deepAnalysis}>
+              Deep Analysis {deepAnalysis && <Brain className="h-3 w-3 ml-1" />}
+            </TabsTrigger>
             <TabsTrigger value="reasoning">
               Reasoning {deepAnalysis && '(Deep)'}
             </TabsTrigger>
@@ -357,19 +368,26 @@ export default function UnifiedClinicalAnalysis({
                 )}
               </>
             )}
+          </TabsContent>
 
-            {deepAnalysis && (
+          {/* Deep Analysis Tab with Editable View + Chatbot */}
+          <TabsContent value="deep-analysis" className="space-y-4">
+            {deepAnalysis ? (
+              <EditablePipelineResultView
+                result={deepAnalysis}
+                patientId={patientId}
+                patientName={patientName}
+                chiefComplaint={chiefComplaint}
+                briefId={briefId || undefined}
+                onUpdate={(updatedResult) => setDeepAnalysis(updatedResult)}
+              />
+            ) : (
               <Card>
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <Brain className="h-5 w-5 text-primary" />
-                    Deep Analysis Report
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="prose prose-sm max-w-none">
-                    <div className="whitespace-pre-wrap text-sm">{deepAnalysis.report}</div>
-                  </div>
+                <CardContent className="text-center py-8 text-muted-foreground">
+                  <Brain className="h-12 w-12 mx-auto mb-3 opacity-50" />
+                  <p className="text-sm">
+                    Deep analysis is available for complex cases. Run analysis with detailed clinical notes.
+                  </p>
                 </CardContent>
               </Card>
             )}

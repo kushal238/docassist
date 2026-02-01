@@ -423,9 +423,15 @@ export async function runClinicalPipeline(
     console.log('[Pipeline] Chief complaint:', complaint);
 
     const { content, traceId } = await executePrompt(
+<<<<<<< Updated upstream
       PROMPT_IDS.CLINICAL_LENS,
       serializeVariables(variables),
       { model: 'gpt-4o-mini' } // Fast model for extraction
+=======
+      PROMPT_IDS.EXTRACTION,
+      serializeVariables(variables),
+      { debug: true } // Enable debug logging
+>>>>>>> Stashed changes
     );
 
     metadata.traceIds.clinicalLens = traceId;
@@ -471,6 +477,7 @@ export async function runClinicalPipeline(
       chief_complaint: complaint,
     };
 
+<<<<<<< Updated upstream
     console.log('[Pipeline] 🧠 Stage 2: Diagnostic Engine (Smart Model)');
     console.log('[Pipeline] Building on Clinical Lens output');
 
@@ -478,6 +485,11 @@ export async function runClinicalPipeline(
       PROMPT_IDS.DIAGNOSTIC_ENGINE,
       serializeVariables(variables),
       { model: 'gpt-4o' } // Smart model for reasoning
+=======
+    const { content, traceId } = await executePrompt(
+      PROMPT_IDS.FILTERING,
+      serializeVariables(variables)
+>>>>>>> Stashed changes
     );
 
     metadata.traceIds.diagnosticEngine = traceId;
@@ -516,9 +528,65 @@ export async function runClinicalPipeline(
   const totalDuration = Date.now() - pipelineStartTime;
   metadata.executionTimeMs = totalDuration;
 
+<<<<<<< Updated upstream
   console.log('[Pipeline] 🎉 Pipeline complete!');
   console.log('[Pipeline] Total duration:', totalDuration, 'ms');
   console.log('[Pipeline] Stage breakdown:', metadata.stageDurations);
+=======
+    const { content, traceId } = await executePrompt(
+      PROMPT_IDS.REASONING,
+      serializeVariables(variables)
+    );
+
+    metadata.traceIds.reasoning = traceId;
+    clinicalReasoning = content;
+    traceData.clinicalReasoning = clinicalReasoning;
+    metadata.stagesCompleted.push('reasoning');
+    
+  } catch (error) {
+    const traceId = error instanceof PipelineError ? error.traceId : null;
+    return {
+      success: false,
+      error: `Clinical Reasoning failed: ${error instanceof Error ? error.message : String(error)}`,
+      stage: 'reasoning',
+      trace_id: traceId,
+    };
+  }
+
+  // =========================================================================
+  // Stage 4: Synthesis
+  // =========================================================================
+  let finalReport: string;
+  
+  try {
+    const variables: SynthesisVariables = {
+      reasoning_chain: clinicalReasoning,
+    };
+
+    const { content, traceId } = await executePrompt(
+      PROMPT_IDS.SYNTHESIS,
+      serializeVariables(variables)
+    );
+
+    metadata.traceIds.synthesis = traceId;
+    finalReport = content;
+    metadata.stagesCompleted.push('synthesis');
+    
+  } catch (error) {
+    const traceId = error instanceof PipelineError ? error.traceId : null;
+    return {
+      success: false,
+      error: `Synthesis failed: ${error instanceof Error ? error.message : String(error)}`,
+      stage: 'synthesis',
+      trace_id: traceId,
+    };
+  }
+
+  // =========================================================================
+  // Return Success Result
+  // =========================================================================
+  metadata.executionTimeMs = Date.now() - startTime;
+>>>>>>> Stashed changes
 
   return {
     success: true,

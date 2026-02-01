@@ -42,15 +42,8 @@ export interface DocExplanation {
   questionsForDoctor: string[];
 }
 
-// Mock: Ingest document and create embeddings
-export async function ingestDocument(documentId: string): Promise<{ success: boolean }> {
-  // Simulate processing delay
-  await new Promise(resolve => setTimeout(resolve, 2000));
-  
-  console.log(`[Mock API] Ingesting document: ${documentId}`);
-  
-  return { success: true };
-}
+// Document ingestion is now handled by /src/services/document-ingestion.ts
+// See: ingestDocument(documentId, patientId, file)
 
 import { generateGeminiBrief, generateGeminiChat, generateGeminiSOAP } from './gemini';
 
