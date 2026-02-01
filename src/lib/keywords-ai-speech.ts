@@ -28,6 +28,40 @@ export interface SpeechToTextError {
 }
 
 /**
+ * Format clinical transcripts into readable paragraph blocks.
+ * Adds section breaks for common headers and normalizes vitals spacing.
+ */
+export function formatClinicalTranscript(rawText: string): string {
+  if (!rawText) return '';
+  let text = rawText.trim();
+
+  text = text.replace(
+    /\b(?:bp|blood pressure)\s*:?(\d{2,3})\s*(?:\/|x)\s*(\d{2,3})\b/gi,
+    'BP $1/$2'
+  );
+  text = text.replace(
+    /\b(?:hr|heart rate)\s*:?(\d{2,3})\b/gi,
+    'HR $1'
+  );
+
+  text = text.replace(
+    /(^|[.!?]\s+)(Exam|Examination|Impression|Assessment|Plan)\b\s*:?[\s]*/gi,
+    (_match, prefix: string, section: string) => {
+      const normalized = section.charAt(0).toUpperCase() + section.slice(1).toLowerCase();
+      const trimmedPrefix = prefix.trimEnd();
+      const separator = trimmedPrefix ? `${trimmedPrefix}\n\n` : '';
+      return `${separator}${normalized}: `;
+    }
+  );
+
+  text = text.replace(/[ \t]+/g, ' ');
+  text = text.replace(/\s*\n\s*/g, '\n');
+  text = text.replace(/\n{3,}/g, '\n\n');
+
+  return text.trim();
+}
+
+/**
  * Transcribe audio blob using Keywords AI Speech-to-Text API via OpenAI SDK
  * Reference: https://docs.keywordsai.co/api-endpoints/develop/multimodal/speech-to-text
  * 

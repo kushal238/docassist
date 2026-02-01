@@ -3,7 +3,7 @@ import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Textarea } from '@/components/ui/textarea';
 import { Mic, MicOff, Loader2 } from 'lucide-react';
-import { transcribeAudio } from '@/lib/keywords-ai-speech';
+import { transcribeAudio, formatClinicalTranscript } from '@/lib/keywords-ai-speech';
 import { toast } from 'sonner';
 
 interface VoiceClinicalInputProps {
@@ -89,7 +89,7 @@ export default function VoiceClinicalInput({
         return;
       }
 
-      const newTranscript = response.transcript.trim();
+      const newTranscript = formatClinicalTranscript(response.transcript);
       const updatedTranscript = value ? `${value}\n\n${newTranscript}` : newTranscript;
 
       onChange(updatedTranscript);
