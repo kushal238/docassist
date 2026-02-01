@@ -40,7 +40,7 @@ export default function DoctorLayout({ children, breadcrumbs }: DoctorLayoutProp
               <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary text-primary-foreground">
                 <Stethoscope className="h-5 w-5" />
               </div>
-              <span className="font-semibold text-lg">DocAdvisor</span>
+              <span className="font-semibold text-lg">DocAssist</span>
             </Link>
             
             <nav className="hidden md:flex items-center gap-1">
