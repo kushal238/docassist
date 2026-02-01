@@ -34,7 +34,7 @@ import { getPatientClinicalSummary, getDetectedAlerts } from '@/lib/clinical-ins
 import type { EvaluationSummary } from '@/lib/evaluations';
 import { ingestDocument } from '@/services/document-ingestion';
 import { deleteDocument } from '@/services/data-management';
-import DeepAnalysisChatbot from './DeepAnalysisChatbot';
+import AnalysisChatbot from './DeepAnalysisChatbot';
 import EditablePipelineResultView from './EditablePipelineResultView';
 
 // Types for structured clinical data
@@ -496,16 +496,17 @@ export default function UnifiedClinicalAnalysis({
               </details>
             )}
 
-            {/* AI Chatbot for Deep Analysis */}
-            {deepAnalysis && (
-              <DeepAnalysisChatbot
-                patientId={patientId}
-                patientName={patientName}
-                deepAnalysis={deepAnalysis}
-                chiefComplaint={chiefComplaint}
-                onAnalysisUpdate={setDeepAnalysis}
-              />
-            )}
+            {/* AI Analysis Assistant - Always visible when analysis is complete */}
+            <AnalysisChatbot
+              patientId={patientId}
+              patientName={patientName}
+              deepAnalysis={deepAnalysis}
+              brief={brief}
+              dataSources={dataSources}
+              chiefComplaint={chiefComplaint}
+              clinicalNotes={clinicalNotes}
+              onAnalysisUpdate={setDeepAnalysis}
+            />
           </div>
 
           {/* Right Column - Patient Details */}

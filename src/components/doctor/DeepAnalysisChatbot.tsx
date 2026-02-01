@@ -1,8 +1,9 @@
 /**
- * Deep Analysis Chatbot with Voice Recording
+ * Analysis Assistant Chatbot with Voice Recording
  * 
  * Features:
- * - Context-aware: Knows about the patient's deep analysis
+ * - Context-aware: Knows about ALL patient data (labs, vitals, meds, analysis)
+ * - Works for both quick and deep analysis modes
  * - Voice input: Record questions using microphone
  * - Citation support: Links to analysis sections
  * - Medical knowledge: Trained on medical terminology
@@ -35,6 +36,7 @@ import {
 import { toast } from 'sonner';
 import { transcribeAudio as keywordsTranscribe } from '@/lib/keywords-ai-speech';
 import type { ClinicalPipelineResult } from '@/services/clinical-pipeline';
+import type { BriefContent } from '@/lib/api';
 
 // =============================================================================
 // Types
@@ -48,33 +50,51 @@ interface ChatMessage {
   citations?: { section: string; relevance: string }[];
 }
 
-interface DeepAnalysisChatbotProps {
+// Full patient data for comprehensive context
+interface PatientDataSources {
+  diagnoses?: Array<{ name: string; type: string; icd: string | null; specialty: string }>;
+  medications?: Array<{ drug: string; dose: string; frequency: string; status: string; indication: string; notes: string | null }>;
+  recent_labs?: Array<{ name: string; value: number; unit: string; abnormal: boolean; date: string }>;
+  recent_vitals?: { bp: string; hr: number; o2: number; weight_kg: number; date: string } | null;
+  active_symptoms?: Array<{ description: string; severity: number; onset: string }>;
+  detected_alerts?: Array<{ alert_type: string; priority: string; title: string; description: string }>;
+}
+
+interface AnalysisChatbotProps {
   patientId: string;
   patientName?: string;
-  deepAnalysis: ClinicalPipelineResult;
+  deepAnalysis?: ClinicalPipelineResult | null;
+  brief?: BriefContent | null;
+  dataSources?: PatientDataSources | null;
   chiefComplaint?: string;
+  clinicalNotes?: string;
   onAnalysisUpdate?: (updatedAnalysis: ClinicalPipelineResult) => void;
 }
 
 const SUGGESTED_QUESTIONS = [
   { label: "Explain diagnosis", query: "Can you explain the most likely diagnosis in simpler terms?" },
+  { label: "Lab interpretation", query: "What do the lab results indicate and are any concerning?" },
   { label: "Red flags", query: "What are the red flags I should watch for?" },
+  { label: "Vitals significance", query: "What do the current vitals suggest about the patient's condition?" },
+  { label: "Medication review", query: "Are there any potential drug interactions or concerns with current medications?" },
   { label: "Treatment options", query: "What are the treatment options for this condition?" },
   { label: "Differential", query: "Why were other diagnoses ruled out?" },
   { label: "Next steps", query: "What tests or follow-up actions are recommended?" },
-  { label: "Evidence basis", query: "What evidence supports this diagnosis?" },
 ];
 
 // =============================================================================
 // Component
 // =============================================================================
 
-export default function DeepAnalysisChatbot({
+export default function AnalysisChatbot({
   patientId,
   patientName,
   deepAnalysis,
+  brief,
+  dataSources,
   chiefComplaint,
-}: DeepAnalysisChatbotProps) {
+  clinicalNotes,
+}: AnalysisChatbotProps) {
   const { profile } = useAuth();
   const scrollRef = useRef<HTMLDivElement>(null);
   
@@ -156,47 +176,131 @@ export default function DeepAnalysisChatbot({
   // =============================================================================
 
   const buildAnalysisContext = (): string => {
-    // Use the 2-stage ClinicalPipelineResult structure
-    const cl = deepAnalysis.clinicalLens;
-    const de = deepAnalysis.diagnosticEngine;
-    
-    let context = `=== DEEP ANALYSIS CONTEXT ===\n`;
+    let context = `=== PATIENT CLINICAL CONTEXT ===\n`;
     context += `Patient: ${patientName || 'Unknown'}\n`;
     context += `Chief Complaint: ${chiefComplaint || 'Not specified'}\n\n`;
     
-    // Clinical Lens data
-    if (cl) {
-      context += `=== CLINICAL LENS ===\n`;
-      if (cl.relevant_history?.length) context += `History: ${cl.relevant_history.join(', ')}\n`;
-      if (cl.current_medications?.length) context += `Medications: ${cl.current_medications.join(', ')}\n`;
-      if (cl.red_flags?.length) context += `Red Flags: ${cl.red_flags.join(', ')}\n`;
-      if (cl.risk_factors?.length) context += `Risk Factors: ${cl.risk_factors.join(', ')}\n`;
-      if (cl.symptom_timeline) context += `Timeline: ${cl.symptom_timeline}\n`;
+    // Include clinical notes if provided
+    if (clinicalNotes) {
+      context += `=== CLINICAL NOTES ===\n${clinicalNotes}\n\n`;
     }
     
-    // Diagnostic Engine data
-    if (de) {
-      context += `\n=== DIAGNOSTIC ENGINE ===\n`;
-      if (de.assessment_summary) context += `Assessment: ${de.assessment_summary}\n`;
+    // Include vitals from dataSources
+    if (dataSources?.recent_vitals) {
+      const v = dataSources.recent_vitals;
+      context += `=== VITALS ===\n`;
+      context += `Blood Pressure: ${v.bp}\n`;
+      context += `Heart Rate: ${v.hr} bpm\n`;
+      context += `O2 Saturation: ${v.o2}%\n`;
+      context += `Weight: ${v.weight_kg} kg\n`;
+      if (v.date) context += `Recorded: ${v.date}\n`;
+      context += `\n`;
+    }
+    
+    // Include labs from dataSources
+    if (dataSources?.recent_labs?.length) {
+      context += `=== LABORATORY RESULTS ===\n`;
+      dataSources.recent_labs.forEach((lab) => {
+        const abnormalFlag = lab.abnormal ? ' [ABNORMAL]' : '';
+        context += `- ${lab.name}: ${lab.value} ${lab.unit}${abnormalFlag} (${lab.date})\n`;
+      });
+      context += `\n`;
+    }
+    
+    // Include medications from dataSources
+    if (dataSources?.medications?.length) {
+      context += `=== CURRENT MEDICATIONS ===\n`;
+      dataSources.medications.forEach((med) => {
+        context += `- ${med.drug} ${med.dose} ${med.frequency} (${med.status})`;
+        if (med.indication) context += ` - for ${med.indication}`;
+        context += `\n`;
+      });
+      context += `\n`;
+    }
+    
+    // Include diagnoses/problem list from dataSources
+    if (dataSources?.diagnoses?.length) {
+      context += `=== PROBLEM LIST / DIAGNOSES ===\n`;
+      dataSources.diagnoses.forEach((dx) => {
+        context += `- ${dx.name} (${dx.type})`;
+        if (dx.icd) context += ` [${dx.icd}]`;
+        context += `\n`;
+      });
+      context += `\n`;
+    }
+    
+    // Include active symptoms from dataSources
+    if (dataSources?.active_symptoms?.length) {
+      context += `=== ACTIVE SYMPTOMS ===\n`;
+      dataSources.active_symptoms.forEach((symptom) => {
+        context += `- ${symptom.description} (severity: ${symptom.severity}/10, onset: ${symptom.onset})\n`;
+      });
+      context += `\n`;
+    }
+    
+    // Include detected alerts
+    if (dataSources?.detected_alerts?.length) {
+      context += `=== CLINICAL ALERTS ===\n`;
+      dataSources.detected_alerts.forEach((alert) => {
+        context += `- [${alert.priority}] ${alert.title}: ${alert.description}\n`;
+      });
+      context += `\n`;
+    }
+    
+    // Include quick brief if available
+    if (brief) {
+      context += `=== AI CLINICAL BRIEF ===\n`;
+      if (brief.summary) context += `Summary: ${brief.summary}\n`;
+      if (brief.differentialConsiderations?.length) {
+        context += `Differential: ${brief.differentialConsiderations.join(', ')}\n`;
+      }
+      if (brief.actionableRecommendations?.length) {
+        context += `Recommendations: ${brief.actionableRecommendations.join(', ')}\n`;
+      }
+      if (brief.safetyAlerts?.length) {
+        context += `Safety Alerts: ${brief.safetyAlerts.join(', ')}\n`;
+      }
+      context += `\n`;
+    }
+    
+    // Include deep analysis if available (2-stage ClinicalPipelineResult)
+    if (deepAnalysis) {
+      const cl = deepAnalysis.clinicalLens;
+      const de = deepAnalysis.diagnosticEngine;
       
-      if (de.differential?.most_likely?.length) {
-        context += `\nMost Likely Diagnoses:\n`;
-        de.differential.most_likely.forEach((dx, i) => {
-          context += `${i + 1}. ${dx.diagnosis} (${((dx.confidence || 0) * 100).toFixed(0)}%)\n`;
-        });
+      if (cl) {
+        context += `=== DEEP ANALYSIS - CLINICAL LENS ===\n`;
+        if (cl.relevant_history?.length) context += `History: ${cl.relevant_history.join(', ')}\n`;
+        if (cl.current_medications?.length) context += `Extracted Medications: ${cl.current_medications.join(', ')}\n`;
+        if (cl.red_flags?.length) context += `Red Flags: ${cl.red_flags.join(', ')}\n`;
+        if (cl.risk_factors?.length) context += `Risk Factors: ${cl.risk_factors.join(', ')}\n`;
+        if (cl.symptom_timeline) context += `Timeline: ${cl.symptom_timeline}\n`;
+        context += `\n`;
       }
       
-      if (de.differential?.cant_miss?.length) {
-        context += `\nCan't Miss (Critical):\n`;
-        de.differential.cant_miss.forEach((dx) => {
-          context += `- ${dx.diagnosis} (${dx.urgency})\n`;
-        });
-      }
-      
-      if (de.suggested_plan) {
-        context += `\nSuggested Plan:\n`;
-        if (de.suggested_plan.immediate?.length) context += `Immediate: ${de.suggested_plan.immediate.join(', ')}\n`;
-        if (de.suggested_plan.short_term?.length) context += `Short-term: ${de.suggested_plan.short_term.join(', ')}\n`;
+      if (de) {
+        context += `=== DEEP ANALYSIS - DIAGNOSTIC ENGINE ===\n`;
+        if (de.assessment_summary) context += `Assessment: ${de.assessment_summary}\n`;
+        
+        if (de.differential?.most_likely?.length) {
+          context += `Most Likely Diagnoses:\n`;
+          de.differential.most_likely.forEach((dx, i) => {
+            context += `  ${i + 1}. ${dx.diagnosis} (${((dx.confidence || 0) * 100).toFixed(0)}% confidence)\n`;
+          });
+        }
+        
+        if (de.differential?.cant_miss?.length) {
+          context += `Can't Miss (Critical):\n`;
+          de.differential.cant_miss.forEach((dx) => {
+            context += `  - ${dx.diagnosis} (${dx.urgency})\n`;
+          });
+        }
+        
+        if (de.suggested_plan) {
+          context += `Suggested Plan:\n`;
+          if (de.suggested_plan.immediate?.length) context += `  Immediate: ${de.suggested_plan.immediate.join(', ')}\n`;
+          if (de.suggested_plan.short_term?.length) context += `  Short-term: ${de.suggested_plan.short_term.join(', ')}\n`;
+        }
       }
     }
     
@@ -315,7 +419,7 @@ export default function DeepAnalysisChatbot({
                 </div>
                 <h3 className="text-sm font-medium mb-2">Ask About the Analysis</h3>
                 <p className="text-xs text-muted-foreground max-w-xs mb-4">
-                  I have full context of the deep analysis. Ask me anything about diagnoses, treatment options, or clinical reasoning.
+                  I have full context including vitals, labs, medications, and the clinical analysis. Ask me anything about diagnoses, treatment options, or clinical reasoning.
                 </p>
                 
                 <div className="w-full">
