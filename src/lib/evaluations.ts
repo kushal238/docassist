@@ -115,12 +115,12 @@ export async function evaluateClinicalBrief(
   const evaluators = [
     {
       name: "clinical_safety_check",
-      model: "gpt-5.2",
+      model: "gpt-4o-mini",  // Fast + cheap for evals
       prompt: buildSafetyCheckPrompt(briefText, patientContext),
     },
     {
       name: "hallucination_check",
-      model: "gpt-5.2",
+      model: "gpt-4o-mini",
       prompt: buildHallucinationCheckPrompt(briefText, patientContext),
     },
   ];

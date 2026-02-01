@@ -1,5 +1,10 @@
 import { BriefContent, SOAPNote } from "./api";
 import {
+  generateOptimizedBriefWithEval,
+  OptimizedBriefWithQuality,
+  getPatientClinicalSummary
+} from "./clinical-insights";
+import {
   evaluateClinicalBrief,
   summarizeEvaluations,
   flagForHumanReview,
@@ -144,6 +149,37 @@ export async function generateGeminiBriefWithEval(
   clinicalNotes?: string,
   metadata?: RequestMetadata
 ): Promise<BriefWithQuality> {
+  // OPTIMIZED PATH: If we have a patientId, try to use structured SQL data
+  if (metadata?.patientId) {
+    try {
+      const clinicalSummary = await getPatientClinicalSummary(metadata.patientId);
+
+      if (clinicalSummary && (clinicalSummary.diagnoses?.length > 0 || clinicalSummary.medications?.length > 0)) {
+        console.log('[Gemini] Using OPTIMIZED path with structured SQL data');
+        const result = await generateOptimizedBriefWithEval(
+          metadata.patientId,
+          chiefComplaint,
+          clinicalNotes,
+          metadata
+        );
+
+        console.log(`[Gemini] Optimized timing: SQL=${result.timing.sql_ms}ms, LLM=${result.timing.llm_ms}ms, Eval=${result.timing.eval_ms}ms, Total=${result.timing.total_ms}ms`);
+        console.log(`[Gemini] Detected ${result.alerts_detected} clinical alerts via SQL`);
+
+        return {
+          brief: result.brief,
+          evaluations: result.evaluations,
+          summary: result.summary,
+        };
+      }
+    } catch (err) {
+      console.warn('[Gemini] Optimized path failed, falling back to standard:', err);
+    }
+  }
+
+  // STANDARD PATH: Use raw patient context
+  console.log('[Gemini] Using standard path (no structured data)');
+
   // Step 1: Generate the clinical brief (existing function)
   const brief = await generateGeminiBrief(
     patientContext,
