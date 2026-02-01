@@ -214,6 +214,42 @@ export type Database = {
           },
         ]
       }
+      doctor_patient: {
+        Row: {
+          assigned_at: string | null
+          doctor_profile_id: string
+          id: string
+          patient_id: string
+        }
+        Insert: {
+          assigned_at?: string | null
+          doctor_profile_id: string
+          id?: string
+          patient_id: string
+        }
+        Update: {
+          assigned_at?: string | null
+          doctor_profile_id?: string
+          id?: string
+          patient_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "doctor_patient_doctor_profile_id_fkey"
+            columns: ["doctor_profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "doctor_patient_patient_id_fkey"
+            columns: ["patient_id"]
+            isOneToOne: false
+            referencedRelation: "patients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       patients: {
         Row: {
           created_at: string | null
@@ -262,18 +298,21 @@ export type Database = {
       profiles: {
         Row: {
           created_at: string | null
+          email: string | null
           full_name: string
           id: string
           role: Database["public"]["Enums"]["user_role"]
         }
         Insert: {
           created_at?: string | null
+          email?: string | null
           full_name: string
           id: string
           role?: Database["public"]["Enums"]["user_role"]
         }
         Update: {
           created_at?: string | null
+          email?: string | null
           full_name?: string
           id?: string
           role?: Database["public"]["Enums"]["user_role"]
@@ -320,6 +359,18 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      assign_patient_by_email: {
+        Args: { p_email: string }
+        Returns: Json
+      }
+      create_patient_with_assignment: {
+        Args: { p_full_name: string; p_dob?: string }
+        Returns: string
+      }
+      doctor_can_access_patient: {
+        Args: { doctor_id: string; patient_id: string }
+        Returns: boolean
+      }
       get_user_role: {
         Args: { user_id: string }
         Returns: Database["public"]["Enums"]["user_role"]

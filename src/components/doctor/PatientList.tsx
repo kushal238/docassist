@@ -4,14 +4,14 @@ import { supabase } from '@/integrations/supabase/client';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent } from '@/components/ui/card';
-import { 
-  Search, 
-  Plus, 
-  User, 
-  Calendar, 
+import {
+  Search,
+  User,
+  Calendar,
   ChevronRight,
   Loader2,
-  FileText
+  FileText,
+  UserPlus,
 } from 'lucide-react';
 import { format } from 'date-fns';
 
@@ -24,10 +24,10 @@ interface Patient {
 }
 
 interface PatientListProps {
-  onCreatePatient: () => void;
+  onAssignPatient: () => void;
 }
 
-export default function PatientList({ onCreatePatient }: PatientListProps) {
+export default function PatientList({ onAssignPatient }: PatientListProps) {
   const [patients, setPatients] = useState<Patient[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
@@ -77,9 +77,9 @@ export default function PatientList({ onCreatePatient }: PatientListProps) {
             className="pl-9"
           />
         </div>
-        <Button onClick={onCreatePatient}>
-          <Plus className="h-4 w-4 mr-2" />
-          Create Patient
+        <Button onClick={onAssignPatient}>
+          <UserPlus className="h-4 w-4 mr-2" />
+          Assign Patient
         </Button>
       </div>
 
@@ -92,12 +92,12 @@ export default function PatientList({ onCreatePatient }: PatientListProps) {
             </div>
             <h3 className="text-lg font-medium mb-1">No patients found</h3>
             <p className="text-muted-foreground text-sm mb-4">
-              {searchQuery ? 'Try a different search term' : 'Create your first patient to get started'}
+              {searchQuery ? 'Try a different search term' : 'Assign a patient by their email to get started'}
             </p>
             {!searchQuery && (
-              <Button onClick={onCreatePatient}>
-                <Plus className="h-4 w-4 mr-2" />
-                Create Patient
+              <Button onClick={onAssignPatient}>
+                <UserPlus className="h-4 w-4 mr-2" />
+                Assign Patient
               </Button>
             )}
           </CardContent>

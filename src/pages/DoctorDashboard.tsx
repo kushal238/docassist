@@ -1,13 +1,13 @@
 import { useState } from 'react';
 import DoctorLayout from '@/components/layout/DoctorLayout';
 import PatientList from '@/components/doctor/PatientList';
-import CreatePatientDialog from '@/components/doctor/CreatePatientDialog';
+import AssignPatientDialog from '@/components/doctor/AssignPatientDialog';
 
 export default function DoctorDashboard() {
-  const [createDialogOpen, setCreateDialogOpen] = useState(false);
+  const [assignDialogOpen, setAssignDialogOpen] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
 
-  const handlePatientCreated = () => {
+  const handlePatientAssigned = () => {
     setRefreshKey(prev => prev + 1);
   };
 
@@ -23,13 +23,13 @@ export default function DoctorDashboard() {
 
         <PatientList
           key={refreshKey}
-          onCreatePatient={() => setCreateDialogOpen(true)}
+          onAssignPatient={() => setAssignDialogOpen(true)}
         />
 
-        <CreatePatientDialog
-          open={createDialogOpen}
-          onOpenChange={setCreateDialogOpen}
-          onPatientCreated={handlePatientCreated}
+        <AssignPatientDialog
+          open={assignDialogOpen}
+          onOpenChange={setAssignDialogOpen}
+          onPatientAssigned={handlePatientAssigned}
         />
       </div>
     </DoctorLayout>

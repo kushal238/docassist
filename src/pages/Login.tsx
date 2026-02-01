@@ -74,6 +74,8 @@ export default function Login() {
       if (error) {
         if (error.message.includes('already registered')) {
           setError('This email is already registered. Please sign in.');
+        } else if (error.message.toLowerCase().includes('rate limit')) {
+          setError('Too many signup emails were sent. Please wait a few minutes and try again, or use a different email.');
         } else {
           setError(error.message);
         }
