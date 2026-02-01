@@ -331,35 +331,7 @@ export default function UnifiedClinicalAnalysis({
           // Handle error case
           const errorResult = result as { success: false; error: string };
           toast.error(`Analysis failed: ${errorResult.error}`);
-        if (!result.success) {
-          toast.error(`Analysis failed: ${result.error}`);
-          return;
         }
-
-        setDeepAnalysis(result);
-
-        setCurrentStage('Generating summary brief...');
-        const quickBrief = await generateBrief(
-          patientId,
-          chiefComplaint || undefined,
-          clinicalNotes
-        );
-        setBrief(quickBrief);
-
-        await supabase.from('briefs').insert({
-          patient_id: patientId,
-          created_by_profile_id: profile?.id,
-          content_json: JSON.parse(
-            JSON.stringify({
-              type: 'deep_analysis',
-              deep: result,
-              brief: quickBrief,
-              chiefComplaint,
-            })
-          ),
-        });
-
-        toast.success('Deep analysis complete');
       }
     } catch (error) {
       console.error('Analysis error:', error);

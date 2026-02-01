@@ -32,6 +32,8 @@ import {
   MicOff,
   Square,
 } from 'lucide-react';
+import { toast } from 'sonner';
+import { transcribeAudio as keywordsTranscribe } from '@/lib/keywords-ai-speech';
 import type { ClinicalPipelineResult } from '@/services/clinical-pipeline';
 
 // =============================================================================
@@ -131,11 +133,19 @@ export default function DeepAnalysisChatbot({
   const transcribeAudio = async (audioBlob: Blob) => {
     setLoading(true);
     try {
-      // For now, use a simple placeholder - in production, use Whisper API
-      // This would be: const text = await transcribeWithWhisper(audioBlob);
-      setInput('(Voice input - implement Whisper API for production)');
+      // Use Keywords AI for speech-to-text (same as VoiceClinicalInput)
+      const response = await keywordsTranscribe(audioBlob, 'audio/webm');
+      
+      if (!response.transcript || response.transcript.trim() === '') {
+        toast.error('No speech detected. Please try again.');
+        return;
+      }
+      
+      setInput(response.transcript.trim());
+      toast.success('Voice transcribed successfully');
     } catch (error) {
       console.error('Transcription error:', error);
+      toast.error('Failed to transcribe voice. Please try again or type your question.');
     } finally {
       setLoading(false);
     }
