@@ -98,7 +98,7 @@ export default function Login() {
           <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-primary text-primary-foreground mb-4">
             <Stethoscope className="w-8 h-8" />
           </div>
-          <h1 className="text-3xl font-bold text-foreground">DocAdvisor</h1>
+          <h1 className="text-3xl font-bold text-foreground">DocAssist</h1>
           <p className="text-muted-foreground mt-2">AI-powered clinical insights from your health records</p>
         </div>
 
