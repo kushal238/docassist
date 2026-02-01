@@ -45,7 +45,6 @@ import { ingestDocument } from '@/services/document-ingestion';
 import { deleteDocument } from '@/services/data-management';
 import AnalysisChatbot from './DeepAnalysisChatbot';
 import EditablePipelineResultView from './EditablePipelineResultView';
-import { validateClinicalInsights } from '@/lib/citation-validator';
 
 // Types for structured clinical data
 interface ClinicalDataSources {
@@ -98,7 +97,6 @@ export default function UnifiedClinicalAnalysis({
   const [isUploading, setIsUploading] = useState(false);
   const [viewingDocument, setViewingDocument] = useState<{ filename: string; content: string } | null>(null);
   const [isLoadingDocument, setIsLoadingDocument] = useState(false);
-  const [isLoadingPrevious, setIsLoadingPrevious] = useState(true);
   
   // Symptoms management  
   const [symptoms, setSymptoms] = useState<Array<{ id: string; description: string; onset_date: string | null; severity: number | null }>>([]);
@@ -128,6 +126,32 @@ export default function UnifiedClinicalAnalysis({
   
   const fileInputRef = useRef<HTMLInputElement>(null);
   const isDoctor = profile?.role === 'doctor';
+  const analysisStorageKey = `docassist:analysis:${patientId}`;
+
+  const saveSessionAnalysis = (payload: {
+    brief?: BriefContent | null;
+    deepAnalysis?: ClinicalPipelineResult | null;
+    evaluations?: EvaluationSummary | null;
+    chiefComplaint?: string;
+    dataSources?: ClinicalDataSources | null;
+  }) => {
+    if (typeof window === 'undefined') return;
+    sessionStorage.setItem(
+      analysisStorageKey,
+      JSON.stringify({
+        brief: payload.brief ?? null,
+        deepAnalysis: payload.deepAnalysis ?? null,
+        evaluations: payload.evaluations ?? null,
+        chiefComplaint: payload.chiefComplaint ?? '',
+        dataSources: payload.dataSources ?? null,
+      })
+    );
+  };
+
+  const clearSessionAnalysis = () => {
+    if (typeof window === 'undefined') return;
+    sessionStorage.removeItem(analysisStorageKey);
+  };
 
   // View document content
   const handleViewDocument = async (docId: string, filename: string) => {
@@ -244,57 +268,29 @@ export default function UnifiedClinicalAnalysis({
     loadSymptomReports();
   }, [patientId]);
 
-  // Load previous analysis on mount (persistence across refresh)
+  // Restore analysis for this login session
   useEffect(() => {
-    const loadPreviousAnalysis = async () => {
-      setIsLoadingPrevious(true);
-      try {
-        const { data: briefs } = await supabase
-          .from('briefs')
-          .select('content_json')
-          .eq('patient_id', patientId)
-          .order('created_at', { ascending: false })
-          .limit(1);
+    if (typeof window === 'undefined') return;
+    const raw = sessionStorage.getItem(analysisStorageKey);
+    if (!raw) return;
 
-        if (briefs && briefs.length > 0) {
-          const content = briefs[0].content_json as Record<string, unknown>;
-
-          if (content?.type === 'deep_analysis') {
-            setDeepAnalysis(content.deep as ClinicalPipelineResult);
-            setBrief(content.brief as BriefContent);
-            setChiefComplaint((content.chiefComplaint as string) || '');
-          } else if (content?.type === 'quick_brief_with_eval') {
-            setBrief(content.brief as BriefContent);
-            setEvaluations(content.evaluations as EvaluationSummary);
-            setChiefComplaint((content.chiefComplaint as string) || '');
-          }
-
-          // Also load data sources
-          const [clinicalSummary, detectedAlerts] = await Promise.all([
-            getPatientClinicalSummary(patientId),
-            getDetectedAlerts(patientId),
-          ]);
-
-          if (clinicalSummary) {
-            setDataSources({
-              diagnoses: clinicalSummary.diagnoses || [],
-              medications: clinicalSummary.medications || [],
-              recent_labs: clinicalSummary.recent_labs || [],
-              recent_vitals: clinicalSummary.recent_vitals || null,
-              active_symptoms: clinicalSummary.active_symptoms || [],
-              detected_alerts: detectedAlerts || [],
-            });
-          }
-        }
-      } catch (error) {
-        console.error('Error loading previous analysis:', error);
-      } finally {
-        setIsLoadingPrevious(false);
-      }
-    };
-
-    loadPreviousAnalysis();
-  }, [patientId]);
+    try {
+      const parsed = JSON.parse(raw) as {
+        brief?: BriefContent | null;
+        deepAnalysis?: ClinicalPipelineResult | null;
+        evaluations?: EvaluationSummary | null;
+        chiefComplaint?: string;
+        dataSources?: ClinicalDataSources | null;
+      };
+      if (parsed.brief) setBrief(parsed.brief);
+      if (parsed.deepAnalysis) setDeepAnalysis(parsed.deepAnalysis);
+      if (parsed.evaluations) setEvaluations(parsed.evaluations);
+      if (parsed.chiefComplaint) setChiefComplaint(parsed.chiefComplaint);
+      if (parsed.dataSources) setDataSources(parsed.dataSources);
+    } catch (error) {
+      console.error('Error restoring session analysis:', error);
+    }
+  }, [analysisStorageKey]);
 
   const determineAnalysisDepth = (notes: string): AnalysisDepth => {
     const wordCount = notes.trim().split(/\s+/).length;
@@ -315,13 +311,6 @@ export default function UnifiedClinicalAnalysis({
       .eq('id', patientId)
       .single();
 
-    const { data: briefs } = await supabase
-      .from('briefs')
-      .select('content_json')
-      .eq('patient_id', patientId)
-      .order('created_at', { ascending: false })
-      .limit(1);
-
     const { data: documents } = await supabase
       .from('documents')
       .select('id, filename, doc_type, created_at')
@@ -341,10 +330,6 @@ export default function UnifiedClinicalAnalysis({
       .order('created_at', { ascending: false });
 
     const patientInfo = `Patient Name: ${patient?.full_name || patientName || 'Unknown'}. DOB: ${patient?.dob || 'Unknown'}.`;
-    const existingBriefData = briefs?.[0]?.content_json
-      ? `\n\nPrevious Clinical Data:\n${JSON.stringify(briefs[0].content_json, null, 2)}`
-      : '';
-
     const documentMap = new Map<string, { meta: string; chunks: string[] }>();
     (documents || []).forEach((doc) => {
       const meta = `Document: ${doc.filename} (type: ${doc.doc_type}, date: ${doc.created_at})`;
@@ -379,7 +364,7 @@ export default function UnifiedClinicalAnalysis({
       ? `\n\nAll Patient Documents (raw text):\n${allDocumentsText}`
       : '';
 
-    return `${patientInfo}${symptomsText}${documentsSection}${existingBriefData}`;
+    return `${patientInfo}${symptomsText}${documentsSection}`;
   };
 
   const handleAnalyze = async () => {
@@ -425,18 +410,20 @@ export default function UnifiedClinicalAnalysis({
 
         setBrief(newBrief);
         setEvaluations(summary);
-
-        await supabase.from('briefs').insert({
-          patient_id: patientId,
-          created_by_profile_id: profile?.id,
-          content_json: JSON.parse(
-            JSON.stringify({
-              type: 'quick_brief_with_eval',
-              brief: newBrief,
-              evaluations: summary,
-              chiefComplaint,
-            })
-          ),
+        saveSessionAnalysis({
+          brief: newBrief,
+          evaluations: summary,
+          chiefComplaint,
+          dataSources: clinicalSummary
+            ? {
+                diagnoses: clinicalSummary.diagnoses || [],
+                medications: clinicalSummary.medications || [],
+                recent_labs: clinicalSummary.recent_labs || [],
+                recent_vitals: clinicalSummary.recent_vitals || null,
+                active_symptoms: clinicalSummary.active_symptoms || [],
+                detected_alerts: detectedAlerts || [],
+              }
+            : dataSources,
         });
 
         toast.success(
@@ -463,18 +450,20 @@ export default function UnifiedClinicalAnalysis({
             clinicalNotes
           );
           setBrief(quickBrief);
-
-          await supabase.from('briefs').insert({
-            patient_id: patientId,
-            created_by_profile_id: profile?.id,
-            content_json: JSON.parse(
-              JSON.stringify({
-                type: 'deep_analysis',
-                deep: result,
-                brief: quickBrief,
-                chiefComplaint,
-              })
-            ),
+          saveSessionAnalysis({
+            deepAnalysis: result,
+            brief: quickBrief,
+            chiefComplaint,
+            dataSources: clinicalSummary
+              ? {
+                  diagnoses: clinicalSummary.diagnoses || [],
+                  medications: clinicalSummary.medications || [],
+                  recent_labs: clinicalSummary.recent_labs || [],
+                  recent_vitals: clinicalSummary.recent_vitals || null,
+                  active_symptoms: clinicalSummary.active_symptoms || [],
+                  detected_alerts: detectedAlerts || [],
+                }
+              : dataSources,
           });
 
           toast.success('Deep analysis complete');
@@ -500,17 +489,8 @@ export default function UnifiedClinicalAnalysis({
     setDataSources(null);
     setClinicalNotes('');
     setChiefComplaint('');
+    clearSessionAnalysis();
   };
-
-  // Loading previous analysis
-  if (isLoadingPrevious) {
-    return (
-      <div className="flex items-center justify-center py-12">
-        <Loader2 className="h-6 w-6 animate-spin text-primary" />
-        <span className="ml-2 text-muted-foreground">Loading patient data...</span>
-      </div>
-    );
-  }
 
   if (brief || deepAnalysis) {
     return (
@@ -620,25 +600,11 @@ export default function UnifiedClinicalAnalysis({
                   <ChevronDown className="h-4 w-4 transition-transform group-open:rotate-180" />
                 </summary>
                 <div className="mt-2 p-4 bg-muted/30 rounded-lg space-y-2">
-                  {(() => {
-                    // Validate citations against actual patient data
-                    const validatedInsights = dataSources
-                      ? validateClinicalInsights(brief.clinicalInsights, dataSources, 'mark')
-                      : brief.clinicalInsights;
-
-                    return validatedInsights.map((insight, i) => (
-                      <p
-                        key={i}
-                        className="text-sm leading-relaxed"
-                        dangerouslySetInnerHTML={{
-                          __html: '• ' + insight.replace(
-                            /\[unverified\]/g,
-                            '<span class="text-amber-600 dark:text-amber-400 text-xs font-medium">[unverified]</span>'
-                          )
-                        }}
-                      />
-                    ));
-                  })()}
+                  {brief.clinicalInsights.map((insight, i) => (
+                    <p key={i} className="text-sm leading-relaxed">
+                      • {insight}
+                    </p>
+                  ))}
                 </div>
               </details>
             )}
