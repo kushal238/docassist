@@ -220,7 +220,7 @@ Schema:
   "medications": ["list from medications provided"],
   "allergies": ["from data or 'None reported'"],
   "abnormalLabs": ["list from labs marked abnormal"],
-  "clinicalInsights": ["YOUR analysis WITH DATED SOURCES - e.g., 'AFib (dx: cardiology, Nov 15, 2025) + held warfarin (on_hold, Dec 1, 2025) increases stroke risk. Anemia (Hgb 9.2, Dec 2, 2025) may worsen symptoms.'"],
+  "clinicalInsights": ["Provide 3-6 insight bullets. Each bullet must connect at least two data points and explain significance WITH DATED SOURCES. e.g., 'AFib (dx: cardiology, Nov 15, 2025) + held warfarin (on_hold, Dec 1, 2025) increases stroke risk. Anemia (Hgb 9.2, Dec 2, 2025) may worsen symptoms.'"],
   "differentialConsiderations": ["based on symptoms + history"],
   "actionableRecommendations": ["specific next steps"],
   "safetyAlerts": ["IMPORTANT: Include all pre-detected alerts provided + any you identify"],
@@ -229,7 +229,7 @@ Schema:
   "citations": {}
 }
 
-IMPORTANT: In clinicalInsights, ALWAYS cite the source with DATE for each data point inline:
+IMPORTANT: In clinicalInsights, ALWAYS cite the source with DATE for each data point inline. Do not write single-fact bullets; combine findings and implications.
 - Labs: include value and date, e.g., "(Hgb 9.2, Dec 2, 2025)"
 - Medications: include status, specialty, and date, e.g., "(warfarin on_hold, cardiology, Dec 1, 2025)"
 - Diagnoses: include specialty and date diagnosed, e.g., "(AFib, dx: cardiology, Nov 15, 2025)"
@@ -388,7 +388,7 @@ Generate a clinical brief in valid JSON. Schema:
   "medications": [],
   "allergies": [],
   "abnormalLabs": [],
-  "clinicalInsights": ["YOUR analysis WITH DATED SOURCES - e.g., 'AFib (dx: cardiology, Nov 15, 2025) + held warfarin (on_hold, cardiology, Dec 1, 2025) increases stroke risk.'"],
+  "clinicalInsights": ["Provide 3-6 insight bullets. Each bullet must connect at least two data points and explain significance WITH DATED SOURCES. e.g., 'AFib (dx: cardiology, Nov 15, 2025) + held warfarin (on_hold, cardiology, Dec 1, 2025) increases stroke risk.'"],
   "differentialConsiderations": [],
   "actionableRecommendations": [],
   "safetyAlerts": ["MUST include pre-detected alerts"],
