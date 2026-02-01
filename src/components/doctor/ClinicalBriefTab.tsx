@@ -19,8 +19,10 @@ import {
   ListChecks,
   ShieldAlert,
   AlertCircle,
-  Target
+  Target,
+  Mic
 } from 'lucide-react';
+import VoiceInputButton from '@/components/doctor/VoiceInputButton';
 import { toast } from 'sonner';
 import { generateBrief, BriefContent, Citation } from '@/lib/api';
 import CitationChip from '@/components/CitationChip';
@@ -133,12 +135,23 @@ export default function ClinicalBriefTab({
         <div className="w-full max-w-md space-y-4 mb-6">
           <div>
             <label className="text-sm font-medium mb-2 block">Chief Complaint</label>
-            <Input
-              value={chiefComplaint}
-              onChange={(e) => setChiefComplaint(e.target.value)}
-              placeholder="e.g., Chest pain, persistent headache..."
-              className="text-center"
-            />
+            <div className="flex gap-2">
+              <Input
+                value={chiefComplaint}
+                onChange={(e) => setChiefComplaint(e.target.value)}
+                placeholder="e.g., Chest pain, persistent headache..."
+                className="text-center flex-1"
+              />
+              <VoiceInputButton
+                onTranscript={setChiefComplaint}
+                currentValue={chiefComplaint}
+                appendMode={false}
+              />
+            </div>
+            <p className="text-xs text-muted-foreground mt-1 text-center">
+              <Mic className="h-3 w-3 inline mr-1" />
+              Click the mic to dictate
+            </p>
             <div className="flex flex-wrap gap-2 mt-2 justify-center">
               {suggestedComplaints.map((complaint) => (
                 <Badge

@@ -14,7 +14,9 @@ import {
   Activity,
   FileText,
   ChevronRight,
+  Mic,
 } from 'lucide-react';
+import VoiceInputButton from '@/components/doctor/VoiceInputButton';
 import { toast } from 'sonner';
 import { useClinicalPipeline } from '@/hooks/useClinicalPipeline';
 import PipelineResultView, { PipelineErrorView } from '@/components/doctor/PipelineResultView';
@@ -285,11 +287,23 @@ export default function DeepAnalysisTab({ patientId, patientName }: DeepAnalysis
           <label className="text-sm font-medium mb-2 block">
             Chief Complaint <span className="text-destructive">*</span>
           </label>
-          <Input
-            value={chiefComplaint}
-            onChange={(e) => setChiefComplaint(e.target.value)}
-            placeholder="e.g., Chest pain radiating to left arm..."
-          />
+          <div className="flex gap-2">
+            <Input
+              value={chiefComplaint}
+              onChange={(e) => setChiefComplaint(e.target.value)}
+              placeholder="e.g., Chest pain radiating to left arm..."
+              className="flex-1"
+            />
+            <VoiceInputButton
+              onTranscript={setChiefComplaint}
+              currentValue={chiefComplaint}
+              appendMode={false}
+            />
+          </div>
+          <p className="text-xs text-muted-foreground mt-1">
+            <Mic className="h-3 w-3 inline mr-1" />
+            Click the mic to dictate the chief complaint
+          </p>
           <div className="flex flex-wrap gap-2 mt-2">
             {SUGGESTED_COMPLAINTS.map((complaint) => (
               <Badge
