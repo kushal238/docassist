@@ -469,10 +469,10 @@ export async function runClinicalPipeline(
     diagnosticAssessment = safeParseJSON(content, DiagnosticEngineSchema, 'Stage 2: Diagnostic');
     traceData.diagnosticAssessment = diagnosticAssessment;
     traceData.diagnosticEngine = diagnosticAssessment;
-    traceData.reasoningTrace = (diagnosticAssessment as DiagnosticEngineResult).reasoning_trace || '';
+    traceData.reasoningTrace = (diagnosticAssessment as unknown as DiagnosticEngineResult).reasoning_trace || '';
     metadata.stagesCompleted.push('diagnostic');
 
-    console.log('[Pipeline] Stage 2 complete. Risk:', (diagnosticAssessment as DiagnosticEngineResult).risk_summary?.overall_risk);
+    console.log('[Pipeline] Stage 2 complete. Risk:', (diagnosticAssessment as unknown as DiagnosticEngineResult).risk_summary?.overall_risk);
 
   } catch (error) {
     console.error('[Pipeline] Stage 2 failed:', error);
@@ -528,7 +528,7 @@ export async function runClinicalPipeline(
   return {
     success: true,
     clinicalLens: extractedData as ClinicalLensResult,
-    diagnosticEngine: diagnosticAssessment as DiagnosticEngineResult,
+    diagnosticEngine: diagnosticAssessment as unknown as DiagnosticEngineResult,
     report: finalReport,
     reasoning_trace: traceData.reasoningTrace,
     trace_data: traceData,
