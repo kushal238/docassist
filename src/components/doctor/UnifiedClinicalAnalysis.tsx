@@ -30,7 +30,9 @@ import {
   Trash2,
   File,
   Eye,
+  Mic,
 } from 'lucide-react';
+import VoiceInputButton from './VoiceInputButton';
 import { toast } from 'sonner';
 import VoiceClinicalInput from './VoiceClinicalInput';
 import { generateBrief, BriefContent } from '@/lib/api';
@@ -883,11 +885,23 @@ export default function UnifiedClinicalAnalysis({
           <label className="text-sm font-medium mb-2 block">
             Chief Complaint (Optional - auto-extracted from notes)
           </label>
-          <Input
-            value={chiefComplaint}
-            onChange={(e) => setChiefComplaint(e.target.value)}
-            placeholder="e.g., Chest pain, Headache, Abdominal pain..."
-          />
+          <div className="flex gap-2">
+            <Input
+              value={chiefComplaint}
+              onChange={(e) => setChiefComplaint(e.target.value)}
+              placeholder="e.g., Chest pain, Headache, Abdominal pain..."
+              className="flex-1"
+            />
+            <VoiceInputButton
+              onTranscript={setChiefComplaint}
+              currentValue={chiefComplaint}
+              appendMode={false}
+            />
+          </div>
+          <p className="text-xs text-muted-foreground mt-1">
+            <Mic className="h-3 w-3 inline mr-1" />
+            Click the mic to dictate
+          </p>
         </CardContent>
       </Card>
 
