@@ -122,6 +122,7 @@ function chunkText(text: string, pageNum: number | null): DocumentChunk[] {
 export async function ingestDocument(
   file: File,
   patientId: string,
+  uploaderProfileId?: string,
   showToast = true
 ): Promise<IngestionResult & { chunkCount?: number }> {
   let documentId = '';
@@ -132,25 +133,7 @@ export async function ingestDocument(
       throw new Error(`File too large (${fileSizeMB.toFixed(1)}MB). Maximum: ${CONFIG.MAX_DOCUMENT_SIZE_MB}MB`);
     }
     
-    // Create the document record first
-    const { data: docData, error: docError } = await supabase
-      .from('documents')
-      .insert({
-        patient_id: patientId,
-        filename: file.name,
-        doc_type: file.type === 'application/pdf' ? 'other' : 'other',
-        status: 'pending',
-        storage_path: `documents/${patientId}/${Date.now()}_${file.name}`,
-      })
-      .select('id')
-      .single();
-    
-    if (docError || !docData) {
-      throw new Error('Failed to create document record');
-    }
-    
-    documentId = docData.id;
-    
+    // First extract text - we don't store PDFs, only extracted text
     if (showToast) toast.info('Extracting text from document...');
     
     let extractedPages: { pageNum: number; text: string }[];
@@ -171,6 +154,28 @@ export async function ingestDocument(
       throw new Error('No text content found. The file may be scanned/image-based (OCR not supported).');
     }
     
+    // Create document record (metadata only - no actual file storage)
+    const { data: docData, error: docError } = await supabase
+      .from('documents')
+      .insert({
+        patient_id: patientId,
+        uploader_profile_id: uploaderProfileId || null,
+        filename: file.name,
+        doc_type: 'other',
+        status: 'processed', // Already processed since we extracted text
+        storage_path: `text-only/${patientId}/${Date.now()}_${file.name}`, // Placeholder path - no actual file stored
+      })
+      .select('id')
+      .single();
+    
+    if (docError || !docData) {
+      console.error('Document insert error:', docError);
+      throw new Error(`Failed to create document record: ${docError?.message || 'Unknown error'}`);
+    }
+    
+    documentId = docData.id;
+    
+    // Create chunks from extracted text
     const allChunks: DocumentChunk[] = [];
     let totalCharacters = 0;
     
@@ -199,9 +204,10 @@ export async function ingestDocument(
         page_num: c.page_num,
       })));
     
-    if (chunkError) throw new Error('Failed to store document chunks.');
-    
-    await supabase.from('documents').update({ status: 'processed' }).eq('id', documentId);
+    if (chunkError) {
+      console.error('Chunk insert error:', chunkError);
+      throw new Error(`Failed to store document chunks: ${chunkError.message}`);
+    }
     
     if (showToast) toast.success(`Document processed: ${allChunks.length} text sections extracted`);
     
@@ -210,10 +216,11 @@ export async function ingestDocument(
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';
     if (showToast) toast.error(message);
+    // If we created a document but failed, clean it up
     if (documentId) {
-      await supabase.from('documents').update({ status: 'pending' }).eq('id', documentId);
+      await supabase.from('documents').delete().eq('id', documentId);
     }
-    return { success: false, documentId, chunksCreated: 0, totalCharacters: 0, error: message };
+    return { success: false, documentId: '', chunksCreated: 0, totalCharacters: 0, error: message };
   }
 }
 

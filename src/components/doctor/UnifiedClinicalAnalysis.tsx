@@ -8,6 +8,12 @@ import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import {
   Sparkles,
   Brain,
   Loader2,
@@ -23,6 +29,7 @@ import {
   Upload,
   Trash2,
   File,
+  Eye,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import VoiceClinicalInput from './VoiceClinicalInput';
@@ -86,8 +93,34 @@ export default function UnifiedClinicalAnalysis({
   // Document management
   const [documents, setDocuments] = useState<PatientDocument[]>([]);
   const [isUploading, setIsUploading] = useState(false);
+  const [viewingDocument, setViewingDocument] = useState<{ filename: string; content: string } | null>(null);
+  const [isLoadingDocument, setIsLoadingDocument] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const isDoctor = profile?.role === 'doctor';
+
+  // View document content
+  const handleViewDocument = async (docId: string, filename: string) => {
+    setIsLoadingDocument(true);
+    try {
+      const { data: chunks } = await supabase
+        .from('doc_chunks')
+        .select('chunk_text')
+        .eq('document_id', docId)
+        .order('page_num', { ascending: true });
+      
+      if (chunks && chunks.length > 0) {
+        const fullContent = chunks.map(c => c.chunk_text).join('\n\n');
+        setViewingDocument({ filename, content: fullContent });
+      } else {
+        toast.error('Document content not found');
+      }
+    } catch (error) {
+      console.error('Error loading document:', error);
+      toast.error('Failed to load document');
+    } finally {
+      setIsLoadingDocument(false);
+    }
+  };
 
   // Load documents
   const loadDocuments = async () => {
@@ -111,7 +144,7 @@ export default function UnifiedClinicalAnalysis({
 
     setIsUploading(true);
     try {
-      const result = await ingestDocument(file, patientId);
+      const result = await ingestDocument(file, patientId, profile?.id);
       if (result.success) {
         toast.success('Document uploaded', {
           description: `Extracted ${result.chunkCount} text segments`,
@@ -680,20 +713,33 @@ export default function UnifiedClinicalAnalysis({
                           key={doc.id}
                           className="flex items-center justify-between text-sm p-2 rounded hover:bg-muted/50 group"
                         >
-                          <div className="flex items-center gap-2 truncate flex-1">
+                          <div 
+                            className="flex items-center gap-2 truncate flex-1 cursor-pointer"
+                            onClick={() => handleViewDocument(doc.id, doc.filename)}
+                          >
                             <File className="h-3 w-3 flex-shrink-0" />
-                            <span className="truncate text-xs">{doc.filename}</span>
+                            <span className="truncate text-xs hover:underline">{doc.filename}</span>
                           </div>
-                          {isDoctor && (
+                          <div className="flex items-center gap-1">
                             <Button
                               variant="ghost"
                               size="icon"
-                              className="h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity text-red-500 hover:text-red-600"
-                              onClick={() => handleDeleteDocument(doc.id, doc.filename)}
+                              className="h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity"
+                              onClick={() => handleViewDocument(doc.id, doc.filename)}
                             >
-                              <Trash2 className="h-3 w-3" />
+                              <Eye className="h-3 w-3" />
                             </Button>
-                          )}
+                            {isDoctor && (
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity text-red-500 hover:text-red-600"
+                                onClick={() => handleDeleteDocument(doc.id, doc.filename)}
+                              >
+                                <Trash2 className="h-3 w-3" />
+                              </Button>
+                            )}
+                          </div>
                         </div>
                       ))}
                     </div>
@@ -703,6 +749,23 @@ export default function UnifiedClinicalAnalysis({
             </Card>
           </div>
         </div>
+
+        {/* Document Viewer Modal */}
+        <Dialog open={!!viewingDocument} onOpenChange={() => setViewingDocument(null)}>
+          <DialogContent className="max-w-3xl max-h-[80vh]">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <FileText className="h-5 w-5" />
+                {viewingDocument?.filename}
+              </DialogTitle>
+            </DialogHeader>
+            <ScrollArea className="h-[60vh] mt-4">
+              <pre className="text-sm whitespace-pre-wrap font-mono bg-muted/50 p-4 rounded-lg">
+                {viewingDocument?.content}
+              </pre>
+            </ScrollArea>
+          </DialogContent>
+        </Dialog>
       </div>
     );
   }
@@ -740,6 +803,81 @@ export default function UnifiedClinicalAnalysis({
         </p>
       </div>
 
+      {/* Patient Documents - Available before analysis */}
+      <Card>
+        <CardHeader className="py-3 px-4">
+          <CardTitle className="text-sm font-medium flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <FileText className="h-4 w-4" />
+              Patient Documents
+              {documents.length > 0 && (
+                <Badge variant="secondary" className="text-xs">{documents.length}</Badge>
+              )}
+            </div>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".pdf"
+              onChange={handleFileUpload}
+              className="hidden"
+            />
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={isUploading}
+            >
+              {isUploading ? (
+                <Loader2 className="h-4 w-4 animate-spin mr-2" />
+              ) : (
+                <Upload className="h-4 w-4 mr-2" />
+              )}
+              Upload PDF
+            </Button>
+          </CardTitle>
+        </CardHeader>
+        {documents.length > 0 && (
+          <CardContent className="px-4 pb-4 pt-0">
+            <div className="grid gap-2">
+              {documents.map((doc) => (
+                <div
+                  key={doc.id}
+                  className="flex items-center justify-between p-2 rounded-lg border hover:bg-muted/50 group"
+                >
+                  <div 
+                    className="flex items-center gap-2 truncate flex-1 cursor-pointer"
+                    onClick={() => handleViewDocument(doc.id, doc.filename)}
+                  >
+                    <File className="h-4 w-4 flex-shrink-0 text-muted-foreground" />
+                    <span className="truncate text-sm hover:underline">{doc.filename}</span>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8"
+                      onClick={() => handleViewDocument(doc.id, doc.filename)}
+                    >
+                      <Eye className="h-4 w-4" />
+                    </Button>
+                    {isDoctor && (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 text-red-500 hover:text-red-600"
+                        onClick={() => handleDeleteDocument(doc.id, doc.filename)}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        )}
+      </Card>
+
       <Card>
         <CardContent className="pt-4">
           <label className="text-sm font-medium mb-2 block">
@@ -774,6 +912,23 @@ export default function UnifiedClinicalAnalysis({
       <p className="text-xs text-center text-muted-foreground">
         💡 Complex cases automatically trigger deep analysis with chain-of-thought reasoning
       </p>
+
+      {/* Document Viewer Modal for pre-analysis view */}
+      <Dialog open={!!viewingDocument} onOpenChange={() => setViewingDocument(null)}>
+        <DialogContent className="max-w-3xl max-h-[80vh]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <FileText className="h-5 w-5" />
+              {viewingDocument?.filename}
+            </DialogTitle>
+          </DialogHeader>
+          <ScrollArea className="h-[60vh] mt-4">
+            <pre className="text-sm whitespace-pre-wrap font-mono bg-muted/50 p-4 rounded-lg">
+              {viewingDocument?.content}
+            </pre>
+          </ScrollArea>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
