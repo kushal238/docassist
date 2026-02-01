@@ -45,6 +45,7 @@ import { ingestDocument } from '@/services/document-ingestion';
 import { deleteDocument } from '@/services/data-management';
 import AnalysisChatbot from './DeepAnalysisChatbot';
 import EditablePipelineResultView from './EditablePipelineResultView';
+import { validateClinicalInsights } from '@/lib/citation-validator';
 
 // Types for structured clinical data
 interface ClinicalDataSources {
@@ -97,6 +98,7 @@ export default function UnifiedClinicalAnalysis({
   const [isUploading, setIsUploading] = useState(false);
   const [viewingDocument, setViewingDocument] = useState<{ filename: string; content: string } | null>(null);
   const [isLoadingDocument, setIsLoadingDocument] = useState(false);
+  const [isLoadingPrevious, setIsLoadingPrevious] = useState(true);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const isDoctor = profile?.role === 'doctor';
 
@@ -178,6 +180,58 @@ export default function UnifiedClinicalAnalysis({
   // Load documents on mount
   useEffect(() => {
     loadDocuments();
+  }, [patientId]);
+
+  // Load previous analysis on mount (persistence across refresh)
+  useEffect(() => {
+    const loadPreviousAnalysis = async () => {
+      setIsLoadingPrevious(true);
+      try {
+        const { data: briefs } = await supabase
+          .from('briefs')
+          .select('content_json')
+          .eq('patient_id', patientId)
+          .order('created_at', { ascending: false })
+          .limit(1);
+
+        if (briefs && briefs.length > 0) {
+          const content = briefs[0].content_json as Record<string, unknown>;
+
+          if (content?.type === 'deep_analysis') {
+            setDeepAnalysis(content.deep as ClinicalPipelineResult);
+            setBrief(content.brief as BriefContent);
+            setChiefComplaint((content.chiefComplaint as string) || '');
+          } else if (content?.type === 'quick_brief_with_eval') {
+            setBrief(content.brief as BriefContent);
+            setEvaluations(content.evaluations as EvaluationSummary);
+            setChiefComplaint((content.chiefComplaint as string) || '');
+          }
+
+          // Also load data sources
+          const [clinicalSummary, detectedAlerts] = await Promise.all([
+            getPatientClinicalSummary(patientId),
+            getDetectedAlerts(patientId),
+          ]);
+
+          if (clinicalSummary) {
+            setDataSources({
+              diagnoses: clinicalSummary.diagnoses || [],
+              medications: clinicalSummary.medications || [],
+              recent_labs: clinicalSummary.recent_labs || [],
+              recent_vitals: clinicalSummary.recent_vitals || null,
+              active_symptoms: clinicalSummary.active_symptoms || [],
+              detected_alerts: detectedAlerts || [],
+            });
+          }
+        }
+      } catch (error) {
+        console.error('Error loading previous analysis:', error);
+      } finally {
+        setIsLoadingPrevious(false);
+      }
+    };
+
+    loadPreviousAnalysis();
   }, [patientId]);
 
   const determineAnalysisDepth = (notes: string): AnalysisDepth => {
@@ -386,6 +440,16 @@ export default function UnifiedClinicalAnalysis({
     setChiefComplaint('');
   };
 
+  // Loading previous analysis
+  if (isLoadingPrevious) {
+    return (
+      <div className="flex items-center justify-center py-12">
+        <Loader2 className="h-6 w-6 animate-spin text-primary" />
+        <span className="ml-2 text-muted-foreground">Loading patient data...</span>
+      </div>
+    );
+  }
+
   if (brief || deepAnalysis) {
     return (
       <div className="space-y-4">
@@ -483,19 +547,39 @@ export default function UnifiedClinicalAnalysis({
               </CardContent>
             </Card>
 
-            {/* Expandable Summary - Collapsed by default */}
-            <details className="group">
-              <summary className="flex items-center justify-between p-3 bg-muted/50 rounded-lg cursor-pointer hover:bg-muted transition-colors">
-                <span className="text-sm font-medium flex items-center gap-2">
-                  <FileText className="h-4 w-4" />
-                  Full Clinical Summary
-                </span>
-                <ChevronDown className="h-4 w-4 transition-transform group-open:rotate-180" />
-              </summary>
-              <div className="mt-2 p-4 bg-muted/30 rounded-lg">
-                <p className="text-sm leading-relaxed">{brief?.summary}</p>
-              </div>
-            </details>
+            {/* Clinical Reasoning - Expandable with Citation Validation */}
+            {brief?.clinicalInsights && brief.clinicalInsights.length > 0 && (
+              <details className="group">
+                <summary className="flex items-center justify-between p-3 bg-muted/50 rounded-lg cursor-pointer hover:bg-muted transition-colors">
+                  <span className="text-sm font-medium flex items-center gap-2">
+                    <FileText className="h-4 w-4" />
+                    Clinical Reasoning
+                  </span>
+                  <ChevronDown className="h-4 w-4 transition-transform group-open:rotate-180" />
+                </summary>
+                <div className="mt-2 p-4 bg-muted/30 rounded-lg space-y-2">
+                  {(() => {
+                    // Validate citations against actual patient data
+                    const validatedInsights = dataSources
+                      ? validateClinicalInsights(brief.clinicalInsights, dataSources, 'mark')
+                      : brief.clinicalInsights;
+
+                    return validatedInsights.map((insight, i) => (
+                      <p
+                        key={i}
+                        className="text-sm leading-relaxed"
+                        dangerouslySetInnerHTML={{
+                          __html: '• ' + insight.replace(
+                            /\[unverified\]/g,
+                            '<span class="text-amber-600 dark:text-amber-400 text-xs font-medium">[unverified]</span>'
+                          )
+                        }}
+                      />
+                    ));
+                  })()}
+                </div>
+              </details>
+            )}
 
             {/* Deep Analysis - Expandable */}
             {deepAnalysis && (
@@ -550,10 +634,17 @@ export default function UnifiedClinicalAnalysis({
             {dataSources?.recent_vitals && (
               <Card>
                 <CardHeader className="py-2 px-3">
-                  <CardTitle className="text-xs font-medium text-muted-foreground uppercase tracking-wide flex items-center gap-1">
-                    <Activity className="h-3 w-3" />
-                    Vitals
-                  </CardTitle>
+                  <div className="flex items-center justify-between">
+                    <CardTitle className="text-xs font-medium text-muted-foreground uppercase tracking-wide flex items-center gap-1">
+                      <Activity className="h-3 w-3" />
+                      Vitals
+                    </CardTitle>
+                    {dataSources.recent_vitals.date && (
+                      <span className="text-[10px] text-muted-foreground">
+                        {new Date(dataSources.recent_vitals.date).toLocaleDateString()}
+                      </span>
+                    )}
+                  </div>
                 </CardHeader>
                 <CardContent className="px-3 pb-3">
                   <div className="grid grid-cols-2 gap-2 text-center">
@@ -593,11 +684,18 @@ export default function UnifiedClinicalAnalysis({
                       <div
                         key={i}
                         className={`flex items-center justify-between text-sm px-2 py-1 rounded ${
-                          lab.abnormal ? 'bg-warning/10 text-warning-foreground' : ''
+                          lab.abnormal ? 'bg-amber-100 dark:bg-amber-900/30' : ''
                         }`}
                       >
-                        <span className={lab.abnormal ? 'font-medium' : ''}>{lab.name}</span>
-                        <span className={`font-mono ${lab.abnormal ? 'text-warning font-bold' : ''}`}>
+                        <div className="flex flex-col">
+                          <span className={lab.abnormal ? 'font-medium' : ''}>{lab.name}</span>
+                          {lab.date && (
+                            <span className="text-[10px] text-muted-foreground">
+                              {new Date(lab.date).toLocaleDateString()}
+                            </span>
+                          )}
+                        </div>
+                        <span className={`font-mono ${lab.abnormal ? 'text-amber-700 dark:text-amber-400 font-bold' : ''}`}>
                           {lab.value} {lab.unit && <span className="text-xs text-muted-foreground">{lab.unit}</span>}
                           {lab.abnormal && <span className="ml-1">⚠</span>}
                         </span>

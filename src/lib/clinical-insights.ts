@@ -220,7 +220,7 @@ Schema:
   "medications": ["list from medications provided"],
   "allergies": ["from data or 'None reported'"],
   "abnormalLabs": ["list from labs marked abnormal"],
-  "clinicalInsights": ["YOUR analysis connecting the data points"],
+  "clinicalInsights": ["YOUR analysis WITH INLINE SOURCES - e.g., 'AFib (dx: cardiology) + held warfarin (on_hold since Dec 1) increases stroke risk'"],
   "differentialConsiderations": ["based on symptoms + history"],
   "actionableRecommendations": ["specific next steps"],
   "safetyAlerts": ["IMPORTANT: Include all pre-detected alerts provided + any you identify"],
@@ -228,6 +228,11 @@ Schema:
   "chiefComplaint": "the chief complaint",
   "citations": {}
 }
+
+IMPORTANT: In clinicalInsights, ALWAYS cite the source of each data point inline:
+- Labs: include value and date, e.g., "(Hgb 9.2, Dec 2)"
+- Medications: include status and prescriber, e.g., "(warfarin on_hold, cardiology)"
+- Diagnoses: include specialty, e.g., "(AFib, dx: cardiology)"
 
 CRITICAL: The "safetyAlerts" section MUST include the pre-detected clinical alerts provided in the context. These were identified by validated clinical rules.`;
 
@@ -383,7 +388,7 @@ Generate a clinical brief in valid JSON. Schema:
   "medications": [],
   "allergies": [],
   "abnormalLabs": [],
-  "clinicalInsights": ["YOUR analysis"],
+  "clinicalInsights": ["YOUR analysis WITH SOURCES - e.g., 'AFib (cardiology) + held warfarin (Dec 1) = stroke risk'"],
   "differentialConsiderations": [],
   "actionableRecommendations": [],
   "safetyAlerts": ["MUST include pre-detected alerts"],

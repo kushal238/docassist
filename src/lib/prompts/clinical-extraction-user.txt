@@ -1,0 +1,4 @@
+Extract clinical data from these notes, focusing on the chief complaint. Return ONLY valid JSON.
+
+Notes: {{raw_notes}}
+Chief Complaint: {{chief_complaint}}
