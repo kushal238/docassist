@@ -22,5 +22,5 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
-.envsupabase/.temp/
+supabase/.temp/
 .env
