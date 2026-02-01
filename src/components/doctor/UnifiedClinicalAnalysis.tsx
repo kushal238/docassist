@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/integrations/supabase/client';
 import { Button } from '@/components/ui/button';
@@ -6,6 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { ScrollArea } from '@/components/ui/scroll-area';
 import {
   Sparkles,
   Brain,
@@ -19,6 +20,9 @@ import {
   Stethoscope,
   AlertTriangle,
   TestTube,
+  Upload,
+  Trash2,
+  File,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import VoiceClinicalInput from './VoiceClinicalInput';
@@ -28,6 +32,10 @@ import SOAPNoteGenerator from './SOAPNoteGenerator';
 import { generateGeminiBriefWithEval } from '@/lib/gemini';
 import { getPatientClinicalSummary, getDetectedAlerts } from '@/lib/clinical-insights';
 import type { EvaluationSummary } from '@/lib/evaluations';
+import { ingestDocument } from '@/services/document-ingestion';
+import { deleteDocument } from '@/services/data-management';
+import DeepAnalysisChatbot from './DeepAnalysisChatbot';
+import EditablePipelineResultView from './EditablePipelineResultView';
 
 // Types for structured clinical data
 interface ClinicalDataSources {
@@ -37,6 +45,13 @@ interface ClinicalDataSources {
   recent_vitals: { bp: string; hr: number; o2: number; weight_kg: number; date: string } | null;
   active_symptoms: Array<{ description: string; severity: number; onset: string }>;
   detected_alerts: Array<{ alert_type: string; priority: string; title: string; description: string }>;
+}
+
+interface PatientDocument {
+  id: string;
+  filename: string;
+  doc_type: string;
+  created_at: string;
 }
 
 interface UnifiedClinicalAnalysisProps {
@@ -65,6 +80,68 @@ export default function UnifiedClinicalAnalysis({
   const [dataSources, setDataSources] = useState<ClinicalDataSources | null>(null);
 
   const [showReasoningDetails, setShowReasoningDetails] = useState(false);
+  
+  // Document management
+  const [documents, setDocuments] = useState<PatientDocument[]>([]);
+  const [isUploading, setIsUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const isDoctor = profile?.role === 'doctor';
+
+  // Load documents
+  const loadDocuments = async () => {
+    const { data } = await supabase
+      .from('documents')
+      .select('id, filename, doc_type, created_at')
+      .eq('patient_id', patientId)
+      .order('created_at', { ascending: false });
+    setDocuments(data || []);
+  };
+
+  // Handle file upload
+  const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    if (!file.name.toLowerCase().endsWith('.pdf')) {
+      toast.error('Only PDF files are supported');
+      return;
+    }
+
+    setIsUploading(true);
+    try {
+      const result = await ingestDocument(file, patientId);
+      if (result.success) {
+        toast.success('Document uploaded', {
+          description: `Extracted ${result.chunkCount} text segments`,
+        });
+        await loadDocuments();
+      } else {
+        throw new Error(result.error);
+      }
+    } catch (err) {
+      toast.error('Upload failed', { description: (err as Error).message });
+    } finally {
+      setIsUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
+  // Handle document deletion (doctors only)
+  const handleDeleteDocument = async (docId: string, filename: string) => {
+    if (!isDoctor) return;
+    
+    if (!confirm(`Delete "${filename}"? This cannot be undone.`)) return;
+
+    const success = await deleteDocument(docId, patientId);
+    if (success) {
+      await loadDocuments();
+    }
+  };
+
+  // Load documents on mount
+  useEffect(() => {
+    loadDocuments();
+  }, [patientId]);
 
   const determineAnalysisDepth = (notes: string): AnalysisDepth => {
     const wordCount = notes.trim().split(/\s+/).length;
@@ -249,7 +326,9 @@ export default function UnifiedClinicalAnalysis({
 
           toast.success('Deep analysis complete');
         } else {
-          toast.error(`Analysis failed: ${result.error}`);
+          // Handle error case
+          const errorResult = result as { success: false; error: string };
+          toast.error(`Analysis failed: ${errorResult.error}`);
         }
       }
     } catch (error) {
@@ -380,18 +459,47 @@ export default function UnifiedClinicalAnalysis({
 
             {/* Deep Analysis - Expandable */}
             {deepAnalysis && (
-              <details className="group">
-                <summary className="flex items-center justify-between p-3 bg-muted/50 rounded-lg cursor-pointer hover:bg-muted transition-colors">
+              <details className="group" open>
+                <summary className="flex items-center justify-between p-3 bg-primary/10 rounded-lg cursor-pointer hover:bg-primary/20 transition-colors">
                   <span className="text-sm font-medium flex items-center gap-2">
-                    <Brain className="h-4 w-4" />
+                    <Brain className="h-4 w-4 text-primary" />
                     Deep Analysis Report
+                    {isDoctor && <Badge variant="outline" className="text-[10px]">Editable</Badge>}
                   </span>
                   <ChevronDown className="h-4 w-4 transition-transform group-open:rotate-180" />
                 </summary>
-                <div className="mt-2 p-4 bg-muted/30 rounded-lg">
-                  <pre className="text-xs whitespace-pre-wrap font-mono">{deepAnalysis.report}</pre>
+                <div className="mt-2 space-y-4">
+                  {/* Editable Pipeline Result View */}
+                  <EditablePipelineResultView
+                    patientId={patientId}
+                    analysisResult={deepAnalysis}
+                    onUpdate={setDeepAnalysis}
+                    readOnly={!isDoctor}
+                  />
+                  
+                  {/* Raw Report (collapsed) */}
+                  <details className="group/raw">
+                    <summary className="flex items-center justify-between p-2 bg-muted/30 rounded cursor-pointer text-xs text-muted-foreground">
+                      <span>View Raw Report</span>
+                      <ChevronDown className="h-3 w-3 transition-transform group-open/raw:rotate-180" />
+                    </summary>
+                    <div className="mt-2 p-4 bg-muted/30 rounded-lg">
+                      <pre className="text-xs whitespace-pre-wrap font-mono">{deepAnalysis.report}</pre>
+                    </div>
+                  </details>
                 </div>
               </details>
+            )}
+
+            {/* AI Chatbot for Deep Analysis */}
+            {deepAnalysis && (
+              <DeepAnalysisChatbot
+                patientId={patientId}
+                patientName={patientName}
+                deepAnalysis={deepAnalysis}
+                chiefComplaint={chiefComplaint}
+                onAnalysisUpdate={setDeepAnalysis}
+              />
             )}
           </div>
 
@@ -520,6 +628,73 @@ export default function UnifiedClinicalAnalysis({
                 </Badge>
               </div>
             )}
+
+            {/* Patient Documents - Upload/Delete */}
+            <Card>
+              <CardHeader className="py-2 px-3">
+                <CardTitle className="text-xs font-medium text-muted-foreground uppercase tracking-wide flex items-center justify-between">
+                  <div className="flex items-center gap-1">
+                    <FileText className="h-3 w-3" />
+                    Documents
+                  </div>
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept=".pdf"
+                    onChange={handleFileUpload}
+                    className="hidden"
+                  />
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-6 w-6"
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={isUploading}
+                  >
+                    {isUploading ? (
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                    ) : (
+                      <Upload className="h-3 w-3" />
+                    )}
+                  </Button>
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="px-3 pb-3">
+                {documents.length === 0 ? (
+                  <div className="text-center py-4 text-xs text-muted-foreground">
+                    <File className="h-8 w-8 mx-auto mb-2 opacity-30" />
+                    <p>No documents uploaded</p>
+                    <p className="text-[10px]">Click upload to add PDFs</p>
+                  </div>
+                ) : (
+                  <ScrollArea className="h-[120px]">
+                    <div className="space-y-1">
+                      {documents.map((doc) => (
+                        <div
+                          key={doc.id}
+                          className="flex items-center justify-between text-sm p-2 rounded hover:bg-muted/50 group"
+                        >
+                          <div className="flex items-center gap-2 truncate flex-1">
+                            <File className="h-3 w-3 flex-shrink-0" />
+                            <span className="truncate text-xs">{doc.filename}</span>
+                          </div>
+                          {isDoctor && (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity text-red-500 hover:text-red-600"
+                              onClick={() => handleDeleteDocument(doc.id, doc.filename)}
+                            >
+                              <Trash2 className="h-3 w-3" />
+                            </Button>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </ScrollArea>
+                )}
+              </CardContent>
+            </Card>
           </div>
         </div>
       </div>
