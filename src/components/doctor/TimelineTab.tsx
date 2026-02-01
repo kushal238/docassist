@@ -95,7 +95,7 @@ export default function TimelineTab({ patientId, documents, symptoms, onRefresh 
           storage_path: storagePath,
           filename: file.name,
           doc_type: docType as 'note' | 'lab' | 'imaging' | 'meds' | 'other',
-          status: 'pending',
+          status: 'processed',
         })
         .select()
         .single();
@@ -105,14 +105,7 @@ export default function TimelineTab({ patientId, documents, symptoms, onRefresh 
       toast.success('Document uploaded successfully');
       
       // Trigger ingestion (mock)
-      ingestDocument(documentId).then(() => {
-        // Update status to processed
-        supabase
-          .from('documents')
-          .update({ status: 'processed' })
-          .eq('id', documentId)
-          .then(() => onRefresh());
-      });
+      ingestDocument(documentId);
 
       onRefresh();
     } catch (error) {

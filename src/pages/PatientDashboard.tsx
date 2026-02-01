@@ -126,21 +126,15 @@ export default function PatientDashboard() {
           storage_path: storagePath,
           filename: file.name,
           doc_type: docType as 'note' | 'lab' | 'imaging' | 'meds' | 'other',
-          status: 'pending',
+          status: 'processed',
         });
 
       if (docError) throw docError;
 
       toast.success('Document uploaded successfully');
 
-      // Trigger ingestion
-      ingestDocument(documentId).then(() => {
-        supabase
-          .from('documents')
-          .update({ status: 'processed' })
-          .eq('id', documentId)
-          .then(() => fetchPatientData());
-      });
+      // Trigger ingestion (mock)
+      ingestDocument(documentId);
 
       fetchPatientData();
     } catch (error) {
