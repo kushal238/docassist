@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { Button } from '@/components/ui/button';
@@ -28,11 +28,12 @@ export default function Login() {
   const [signupName, setSignupName] = useState('');
   const [signupRole, setSignupRole] = useState<'doctor' | 'patient'>('patient');
 
-  // Redirect if already logged in
-  if (profile) {
-    navigate(profile.role === 'doctor' ? '/doctor' : '/patient');
-    return null;
-  }
+  // Redirect if already logged in (use useEffect to avoid setState during render)
+  useEffect(() => {
+    if (profile) {
+      navigate(profile.role === 'doctor' ? '/doctor' : '/patient');
+    }
+  }, [profile, navigate]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
