@@ -109,7 +109,7 @@ Return strictly valid JSON (no markdown, no \`\`\`):
   "medications": ["Active medications with doses - ONLY those explicitly listed"],
   "allergies": ["Known allergies with reaction type if documented"],
   "abnormalLabs": ["Abnormal values with reference to normal range, date"],
-  "clinicalInsights": ["Connections between findings WITH DATED SOURCES - e.g., 'Declining GFR (Cr 1.4, Jan 15, 2025) + NSAID use (ibuprofen, Dr. Smith, Jan 10, 2025) warrants review. AFib (dx: cardiology, Nov 15, 2025) increases stroke risk.'"],
+  "clinicalInsights": ["Provide 3-6 insight bullets. Each bullet must connect at least two data points and explain clinical significance WITH DATED SOURCES. e.g., 'The declining kidney function (Cr 1.4, Jan 15) combined with chronic NSAID use is concerning and warrants medication review. The AFib history (dx Nov 2025) puts them at increased stroke risk.'"],
   "differentialConsiderations": ["Top 3-5 diagnoses to consider given presentation, ordered by likelihood"],
   "actionableRecommendations": ["Specific: tests to order, questions to ask, consults to consider"],
   "safetyAlerts": ["CRITICAL: Drug interactions, allergy conflicts, 'can't miss' diagnoses, red flags"],
@@ -117,6 +117,9 @@ Return strictly valid JSON (no markdown, no \`\`\`):
   "chiefComplaint": "Primary reason for visit",
   "citations": {}
 }
+
+## CLINICAL INSIGHTS DEPTH
+Return 3-6 clinicalInsights. Make them information-dense: connect findings, risks, and next-step implications. Avoid single-fact bullets.
 
 ## SAFETY ALERTS PRIORITY
 Always flag: anticoagulation issues, renal dosing needs, drug-allergy conflicts, red flag symptoms (chest pain + risk factors, fever + immunocompromised, etc.)`;
@@ -231,11 +234,12 @@ export async function generateGeminiChat(
   message: string,
   metadata?: RequestMetadata
 ): Promise<{ content: string; citations: [] }> {
-  const systemPrompt = `You are an expert medical AI assistant helping a doctor by answering questions about a patient's medical records.
+  const systemPrompt = `You are an expert medical AI assistant helping a doctor by answering questions about a patient's medical records and analysis.
 
 Answer accurately based strictly on the provided patient context.
-If the answer is not in the context, say so politely.
-Provide a professional, clinical response.`;
+Prefer details from sections like VITALS, LABS, MEDICATIONS, CLINICAL BRIEF, DIAGNOSTIC ENGINE, PRIOR VISITS, and PRIOR SOAP NOTES when relevant.
+If the answer is not in the context, say so politely and suggest what data is missing.
+Provide a professional, clinical response in 3-6 concise bullets when possible. Be precise and on point; avoid fluff or generic AI phrasing.`;
 
   const userPrompt = `PATIENT CONTEXT:
 ${patientContext}
@@ -257,6 +261,73 @@ QUESTION: ${message}`;
     console.error("Chat generation error:", error);
     throw new Error("Failed to generate chat response");
   }
+}
+
+export interface ParsedMedicationOrder {
+  name: string;
+  dosage?: string | null;
+  frequency?: string | null;
+}
+
+export interface ParsedLabOrder {
+  test: string;
+  priority?: string | null;
+}
+
+export async function parseMedicationOrders(
+  input: string
+): Promise<{ medications: ParsedMedicationOrder[] }> {
+  const systemPrompt = `You extract medication orders from clinician text.
+Return STRICT JSON with this schema only:
+{
+  "medications": [
+    { "name": "string", "dosage": "string|null", "frequency": "string|null" }
+  ]
+}
+Rules:
+- Be concise and accurate.
+- If dosage/frequency not stated, return null.
+- Do NOT invent medications.`;
+
+  const userPrompt = `TEXT:\n${input}`;
+  const text = await callKeywordsAI(
+    [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: userPrompt },
+    ],
+    DEFAULT_MODEL,
+    { feature: "parse_med_orders" }
+  );
+  const cleanJson = text.replace(/```json/g, "").replace(/```/g, "").trim();
+  return JSON.parse(cleanJson) as { medications: ParsedMedicationOrder[] };
+}
+
+export async function parseLabOrders(
+  input: string
+): Promise<{ labs: ParsedLabOrder[] }> {
+  const systemPrompt = `You extract lab orders from clinician text.
+Return STRICT JSON with this schema only:
+{
+  "labs": [
+    { "test": "string", "priority": "Routine|Urgent|STAT|null" }
+  ]
+}
+Rules:
+- Be concise and accurate.
+- If priority not stated, return null.
+- Do NOT invent labs.`;
+
+  const userPrompt = `TEXT:\n${input}`;
+  const text = await callKeywordsAI(
+    [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: userPrompt },
+    ],
+    DEFAULT_MODEL,
+    { feature: "parse_lab_orders" }
+  );
+  const cleanJson = text.replace(/```json/g, "").replace(/```/g, "").trim();
+  return JSON.parse(cleanJson) as { labs: ParsedLabOrder[] };
 }
 
 // ============================================
@@ -284,6 +355,7 @@ Structure:
 Guidelines:
 - Use professional medical terminology
 - Base the note STRICTLY on the provided Clinical Brief
+- If the Clinical Brief includes an "orders" section, incorporate those prescriptions and lab orders into the Plan
 - If specific details are missing, note as "Not reported"
 - Leave citations as empty arrays`;
 

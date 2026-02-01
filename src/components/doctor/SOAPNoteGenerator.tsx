@@ -16,24 +16,31 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from '@/components/ui/collapsible';
-import { 
-  FileEdit, 
-  Loader2, 
-  RefreshCw, 
-  Copy, 
+import {
+  FileEdit,
+  Loader2,
+  RefreshCw,
+  Copy,
   Check,
   ChevronDown,
   ChevronRight,
-  AlertCircle
+  AlertCircle,
+  Save
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { BriefContent, Citation, SOAPNote, generateSOAP } from '@/lib/api';
 import CitationChip from '@/components/CitationChip';
+import { useAuth } from '@/hooks/useAuth';
+import { supabase } from '@/integrations/supabase/client';
 
 interface SOAPNoteGeneratorProps {
   patientId: string;
   brief: BriefContent;
   patientName?: string;
+  prescriptions?: Array<{ name: string; dosage: string; frequency: string }>;
+  labOrders?: Array<{ test: string; priority: string }>;
+  vitals?: { bp: string; hr: number; o2: number; weight_kg: number; date: string } | null;
+  onSubmitted?: () => void;
 }
 
 const sectionLabels = {
@@ -43,17 +50,23 @@ const sectionLabels = {
   plan: { label: 'Plan', description: 'Treatment plan and follow-up' },
 };
 
-export default function SOAPNoteGenerator({ 
-  patientId, 
+export default function SOAPNoteGenerator({
+  patientId,
   brief,
-  patientName 
+  patientName,
+  prescriptions = [],
+  labOrders = [],
+  vitals = null,
+  onSubmitted,
 }: SOAPNoteGeneratorProps) {
+  const { profile } = useAuth();
   const [isOpen, setIsOpen] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [regeneratingSection, setRegeneratingSection] = useState<string | null>(null);
   const [soapNote, setSoapNote] = useState<SOAPNote | null>(null);
   const [editedSections, setEditedSections] = useState<Record<string, string>>({});
   const [copiedSection, setCopiedSection] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
   const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({
     subjective: true,
     objective: true,
@@ -64,7 +77,21 @@ export default function SOAPNoteGenerator({
   const generateSOAPNote = async () => {
     setGenerating(true);
     try {
-      const data = await generateSOAP(patientId, brief, patientName);
+      const enhancedBrief = {
+        ...brief,
+        orders: {
+          prescriptions: prescriptions.map((item) => ({
+            name: item.name,
+            dosage: item.dosage,
+            frequency: item.frequency,
+          })),
+          labs: labOrders.map((item) => ({
+            test: item.test,
+            priority: item.priority,
+          })),
+        },
+      } as BriefContent;
+      const data = await generateSOAP(patientId, enhancedBrief, patientName);
       setSoapNote(data);
       setEditedSections({});
       toast.success('SOAP note generated successfully');
@@ -81,7 +108,21 @@ export default function SOAPNoteGenerator({
     
     setRegeneratingSection(section);
     try {
-      const data = await generateSOAP(patientId, brief, patientName, section);
+      const enhancedBrief = {
+        ...brief,
+        orders: {
+          prescriptions: prescriptions.map((item) => ({
+            name: item.name,
+            dosage: item.dosage,
+            frequency: item.frequency,
+          })),
+          labs: labOrders.map((item) => ({
+            test: item.test,
+            priority: item.priority,
+          })),
+        },
+      } as BriefContent;
+      const data = await generateSOAP(patientId, enhancedBrief, patientName, section);
 
       setSoapNote(prev => prev ? {
         ...prev,
@@ -140,6 +181,77 @@ export default function SOAPNoteGenerator({
 
   const toggleSection = (section: string) => {
     setExpandedSections(prev => ({ ...prev, [section]: !prev[section] }));
+  };
+
+  const submitSOAPNote = async () => {
+    if (!soapNote) return;
+
+    setSubmitting(true);
+    try {
+      const formatSection = (value: string) =>
+        value
+          .replace(/\r\n/g, '\n')
+          .replace(/\n{3,}/g, '\n\n')
+          .trim();
+
+      const subjective = formatSection(editedSections.subjective ?? soapNote.subjective.content);
+      const objectiveText = formatSection(editedSections.objective ?? soapNote.objective.content);
+      const assessment = formatSection(editedSections.assessment ?? soapNote.assessment.content);
+      const plan = formatSection(editedSections.plan ?? soapNote.plan.content);
+
+      const encounterDate = new Date().toISOString().split('T')[0];
+      const providerName =
+        typeof profile?.full_name === 'string' && profile.full_name.trim().length > 0
+          ? profile.full_name
+          : null;
+
+      const { data: encounter, error: encounterError } = await supabase
+        .from('encounters')
+        .insert({
+          patient_id: patientId,
+          encounter_date: encounterDate,
+          encounter_type: 'office',
+          specialty: 'pcp',
+          chief_complaint: brief.chiefComplaint || null,
+          provider_name: providerName,
+        })
+        .select('id')
+        .single();
+
+      if (encounterError || !encounter) {
+        throw encounterError || new Error('Failed to create encounter');
+      }
+
+      const objectivePayload = {
+        text: objectiveText,
+        vitals,
+        prescriptions,
+        labs: labOrders,
+      };
+
+      const { error: soapError } = await supabase.from('soap_notes').insert({
+        encounter_id: encounter.id,
+        patient_id: patientId,
+        subjective,
+        objective: objectivePayload,
+        assessment,
+        plan,
+        created_by_profile_id: profile?.id ?? null,
+      });
+
+      if (soapError) {
+        throw soapError;
+      }
+
+      toast.success('SOAP note submitted successfully');
+      setIsOpen(false);
+      onSubmitted?.();
+    } catch (error) {
+      console.error('Error submitting SOAP note:', error);
+      toast.error('Failed to submit SOAP note');
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -208,6 +320,19 @@ export default function SOAPNoteGenerator({
               >
                 <RefreshCw className={`h-3 w-3 ${generating ? 'animate-spin' : ''}`} />
                 Regenerate All
+              </Button>
+              <Button
+                size="sm"
+                onClick={submitSOAPNote}
+                disabled={submitting}
+                className="gap-1"
+              >
+                {submitting ? (
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                ) : (
+                  <Save className="h-3 w-3" />
+                )}
+                Submit to Patient
               </Button>
             </div>
 

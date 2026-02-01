@@ -5,6 +5,7 @@ import { useAuth } from '@/hooks/useAuth';
 import PatientLayout from '@/components/layout/PatientLayout';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { ScrollArea } from '@/components/ui/scroll-area';
 import { 
   Upload, 
   FileText, 
@@ -13,6 +14,12 @@ import {
   CheckCircle2,
   Mic
 } from 'lucide-react';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import {
   Select,
   SelectContent,
@@ -38,6 +45,23 @@ interface Document {
   created_at: string;
 }
 
+interface EncounterSummary {
+  id: string;
+  encounter_date: string;
+  specialty: string;
+  provider_name: string | null;
+}
+
+interface SoapNoteSummary {
+  id: string;
+  encounter_id: string;
+  created_at: string | null;
+  subjective: string | null;
+  objective: any | null;
+  assessment: string | null;
+  plan: string | null;
+}
+
 export default function PatientDashboard() {
   const { profile } = useAuth();
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -45,6 +69,9 @@ export default function PatientDashboard() {
   const [loading, setLoading] = useState(true);
   const [patient, setPatient] = useState<Patient | null>(null);
   const [documents, setDocuments] = useState<Document[]>([]);
+  const [encounters, setEncounters] = useState<EncounterSummary[]>([]);
+  const [soapNotes, setSoapNotes] = useState<SoapNoteSummary[]>([]);
+  const [selectedSoapNote, setSelectedSoapNote] = useState<SoapNoteSummary | null>(null);
   const [uploading, setUploading] = useState(false);
   const [docType, setDocType] = useState<string>('note');
   const [voiceIntakeOpen, setVoiceIntakeOpen] = useState(false);
@@ -92,6 +119,22 @@ export default function PatientDashboard() {
           .order('created_at', { ascending: false });
 
         setDocuments(docsData || []);
+
+        const { data: encountersData } = await supabase
+          .from('encounters')
+          .select('id, encounter_date, specialty, provider_name')
+          .eq('patient_id', patientData.id)
+          .order('encounter_date', { ascending: false });
+
+        setEncounters(encountersData || []);
+
+        const { data: soapData } = await supabase
+          .from('soap_notes')
+          .select('id, encounter_id, created_at, subjective, objective, assessment, plan')
+          .eq('patient_id', patientData.id)
+          .order('created_at', { ascending: false });
+
+        setSoapNotes(soapData || []);
       }
     } catch (error) {
       console.error('Error fetching patient data:', error);
@@ -371,47 +414,129 @@ Source: ${summary.source}`;
           <Card className="card-healthcare">
             <CardHeader>
               <CardTitle className="text-lg">
-                My Documents ({documents.length})
+                My Documents ({documents.length + soapNotes.length})
               </CardTitle>
             </CardHeader>
             <CardContent>
-              {documents.length === 0 ? (
+              {documents.length === 0 && soapNotes.length === 0 ? (
                 <p className="text-sm text-muted-foreground text-center py-4">
                   No documents uploaded yet
                 </p>
               ) : (
-                <div className="space-y-2">
-                  {documents.map((doc) => (
-                    <Link
-                      key={doc.id}
-                      to={`/patient/doc/${doc.id}`}
-                      className="flex items-center justify-between p-3 rounded-lg bg-muted/50 hover:bg-muted transition-colors group"
-                    >
-                      <div className="flex items-center gap-3">
-                        <FileText className="h-4 w-4 text-muted-foreground" />
-                        <div>
-                          <p className="text-sm font-medium truncate max-w-[180px] group-hover:text-primary transition-colors">
-                            {doc.filename}
-                          </p>
-                          <p className="text-xs text-muted-foreground">
-                            {getDocTypeLabel(doc.doc_type)} • {format(new Date(doc.created_at), 'MMM d, yyyy')}
-                          </p>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        {doc.status === 'processed' && (
-                          <CheckCircle2 className="h-4 w-4 text-success" />
-                        )}
-                        <ChevronRight className="h-4 w-4 text-muted-foreground group-hover:text-primary transition-colors" />
-                      </div>
-                    </Link>
-                  ))}
+                <div className="space-y-3">
+                  {documents.length > 0 && (
+                    <div className="space-y-2">
+                      {documents.map((doc) => (
+                        <Link
+                          key={doc.id}
+                          to={`/patient/doc/${doc.id}`}
+                          className="flex items-center justify-between p-3 rounded-lg bg-muted/50 hover:bg-muted transition-colors group"
+                        >
+                          <div className="flex items-center gap-3">
+                            <FileText className="h-4 w-4 text-muted-foreground" />
+                            <div>
+                              <p className="text-sm font-medium truncate max-w-[180px] group-hover:text-primary transition-colors">
+                                {doc.filename}
+                              </p>
+                              <p className="text-xs text-muted-foreground">
+                                {getDocTypeLabel(doc.doc_type)} • {format(new Date(doc.created_at), 'MMM d, yyyy')}
+                              </p>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            {doc.status === 'processed' && (
+                              <CheckCircle2 className="h-4 w-4 text-success" />
+                            )}
+                            <ChevronRight className="h-4 w-4 text-muted-foreground group-hover:text-primary transition-colors" />
+                          </div>
+                        </Link>
+                      ))}
+                    </div>
+                  )}
+
+                  {soapNotes.length > 0 && (
+                    <div className="space-y-2">
+                      <p className="text-xs font-medium uppercase text-muted-foreground">Clinical Notes</p>
+                      {soapNotes.map((note) => {
+                        const encounter = encounters.find((item) => item.id === note.encounter_id);
+                        const dateValue = encounter?.encounter_date || note.created_at || new Date().toISOString();
+                        const provider = encounter?.provider_name || 'Clinician';
+                        return (
+                          <button
+                            key={note.id}
+                            type="button"
+                            onClick={() => setSelectedSoapNote(note)}
+                            className="flex w-full items-center justify-between p-3 rounded-lg bg-muted/30 hover:bg-muted transition-colors"
+                          >
+                            <div className="flex items-center gap-3">
+                              <FileText className="h-4 w-4 text-muted-foreground" />
+                              <div>
+                                <p className="text-sm font-medium">SOAP Note</p>
+                                <p className="text-xs text-muted-foreground">
+                                  {provider} • {format(new Date(dateValue), 'MMM d, yyyy')}
+                                </p>
+                              </div>
+                            </div>
+                            <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
               )}
             </CardContent>
           </Card>
         </div>
       </div>
+
+      <Dialog open={!!selectedSoapNote} onOpenChange={() => setSelectedSoapNote(null)}>
+        <DialogContent className="max-w-3xl max-h-[85vh]">
+          <DialogHeader>
+            <DialogTitle>SOAP Note</DialogTitle>
+          </DialogHeader>
+          <ScrollArea className="h-[65vh] pr-4">
+            {selectedSoapNote && (
+              <div className="space-y-4 text-sm">
+                {selectedSoapNote.subjective && (
+                  <div>
+                    <p className="text-xs font-semibold uppercase text-muted-foreground mb-1">Subjective</p>
+                    <div className="bg-muted/40 rounded-lg p-3 whitespace-pre-wrap">
+                      {selectedSoapNote.subjective}
+                    </div>
+                  </div>
+                )}
+                {selectedSoapNote.objective && (
+                  <div>
+                    <p className="text-xs font-semibold uppercase text-muted-foreground mb-1">Objective</p>
+                    <div className="bg-muted/40 rounded-lg p-3 whitespace-pre-wrap">
+                      {typeof selectedSoapNote.objective === 'string'
+                        ? selectedSoapNote.objective
+                        : selectedSoapNote.objective?.text || JSON.stringify(selectedSoapNote.objective, null, 2)}
+                    </div>
+                  </div>
+                )}
+                {selectedSoapNote.assessment && (
+                  <div>
+                    <p className="text-xs font-semibold uppercase text-muted-foreground mb-1">Assessment</p>
+                    <div className="bg-muted/40 rounded-lg p-3 whitespace-pre-wrap">
+                      {selectedSoapNote.assessment}
+                    </div>
+                  </div>
+                )}
+                {selectedSoapNote.plan && (
+                  <div>
+                    <p className="text-xs font-semibold uppercase text-muted-foreground mb-1">Plan</p>
+                    <div className="bg-muted/40 rounded-lg p-3 whitespace-pre-wrap">
+                      {selectedSoapNote.plan}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </ScrollArea>
+        </DialogContent>
+      </Dialog>
 
       <VoiceSymptomIntake
         open={voiceIntakeOpen}

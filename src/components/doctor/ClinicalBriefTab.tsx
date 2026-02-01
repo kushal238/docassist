@@ -99,6 +99,24 @@ export default function ClinicalBriefTab({
     return patientMode ? simplifyForPatient(text) : text;
   };
 
+  const renderInsightWithSources = (text: string) => {
+    const parts = text.split(/(\([^)]*\))/g).filter(Boolean);
+    return parts.map((part, index) => {
+      const isSource = part.startsWith('(') && part.endsWith(')');
+      if (!isSource) {
+        return <span key={`text-${index}`}>{part}</span>;
+      }
+      return (
+        <span
+          key={`src-${index}`}
+          className="inline-block text-[10px] leading-4 bg-amber-100 text-amber-900 dark:bg-amber-900/30 dark:text-amber-100 px-1.5 py-0.5 rounded-sm border border-amber-200/60 dark:border-amber-800/60 align-baseline"
+        >
+          {part}
+        </span>
+      );
+    });
+  };
+
   // Helper to determine confidence for a section
   const getSectionConfidence = (sectionKey: string, items: string[]) => {
     const citations = brief?.citations?.[sectionKey] || [];
@@ -336,7 +354,7 @@ export default function ClinicalBriefTab({
                 {brief.clinicalInsights.map((item, i) => (
                   <li key={i} className="flex items-start gap-2 text-sm">
                     <span className="h-1.5 w-1.5 rounded-full bg-warning mt-2 flex-shrink-0" />
-                    <span>{displayText(item)}</span>
+                    <span>{renderInsightWithSources(displayText(item))}</span>
                   </li>
                 ))}
               </ul>

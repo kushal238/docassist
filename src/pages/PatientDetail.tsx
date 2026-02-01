@@ -90,7 +90,7 @@ export default function PatientDetail() {
             </TabsTrigger>
             <TabsTrigger value="chat" className="flex items-center gap-2">
               <MessageSquare className="h-4 w-4" />
-              <span className="hidden sm:inline">Ask Chart</span>
+              <span className="hidden sm:inline">Ask Chat</span>
             </TabsTrigger>
           </TabsList>
 

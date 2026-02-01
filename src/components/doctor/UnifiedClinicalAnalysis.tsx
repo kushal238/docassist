@@ -1,17 +1,26 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useMemo } from 'react';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/integrations/supabase/client';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import {
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
+  DialogTrigger,
 } from '@/components/ui/dialog';
 import {
   Sparkles,
@@ -32,15 +41,16 @@ import {
   Eye,
   Mic,
 } from 'lucide-react';
-import VoiceInputButton from './VoiceInputButton';
 import { toast } from 'sonner';
 import VoiceClinicalInput from './VoiceClinicalInput';
+import VoiceInputButton from './VoiceInputButton';
 import { generateBrief, BriefContent } from '@/lib/api';
 import { runClinicalPipeline, ClinicalPipelineResult } from '@/services/clinical-pipeline';
 import SOAPNoteGenerator from './SOAPNoteGenerator';
-import { generateGeminiBriefWithEval } from '@/lib/gemini';
+import { generateGeminiBriefWithEval, parseLabOrders, parseMedicationOrders } from '@/lib/gemini';
 import { getPatientClinicalSummary, getDetectedAlerts } from '@/lib/clinical-insights';
 import type { EvaluationSummary } from '@/lib/evaluations';
+import type { Json } from '@/integrations/supabase/types';
 import { ingestDocument } from '@/services/document-ingestion';
 import { deleteDocument } from '@/services/data-management';
 import AnalysisChatbot from './DeepAnalysisChatbot';
@@ -63,6 +73,35 @@ interface PatientDocument {
   created_at: string;
 }
 
+interface Encounter {
+  id: string;
+  patient_id: string;
+  encounter_date: string;
+  encounter_type: string;
+  specialty: string;
+  chief_complaint: string | null;
+  provider_name: string | null;
+  source_document_id: string | null;
+  created_at: string | null;
+}
+
+interface SoapNote {
+  id: string;
+  encounter_id: string;
+  patient_id: string;
+  subjective: string | null;
+  objective: Json | null;
+  assessment: string | null;
+  plan: string | null;
+  created_by_profile_id: string | null;
+  created_at: string | null;
+}
+
+type DocumentItem =
+  | { kind: 'document'; id: string; title: string; date: string; subtitle: string; document: PatientDocument }
+  | { kind: 'encounter'; id: string; title: string; date: string; subtitle: string; encounter: Encounter }
+  | { kind: 'soap'; id: string; title: string; date: string; subtitle: string; soapNote: SoapNote };
+
 interface UnifiedClinicalAnalysisProps {
   patientId: string;
   patientName?: string;
@@ -70,6 +109,62 @@ interface UnifiedClinicalAnalysisProps {
 }
 
 type AnalysisDepth = 'quick' | 'deep';
+
+interface PrescriptionItem {
+  id: string;
+  name: string;
+  dosage: string;
+  frequency: string;
+}
+
+interface LabOrderItem {
+  id: string;
+  test: string;
+  priority: string;
+}
+
+const COMMON_MEDICATIONS = [
+  'Advil',
+  'Tylenol',
+  'Amoxicillin',
+  'Metformin',
+  'Lisinopril',
+  'Atorvastatin',
+  'Omeprazole',
+  'Amlodipine',
+];
+
+const LAB_TEST_OPTIONS = [
+  'Complete Blood Count (CBC)',
+  'Basic Metabolic Panel (BMP)',
+  'Lipid Panel',
+  'Hemoglobin A1C',
+  'TSH',
+  'Liver Function Tests (LFT)',
+];
+
+const DOSAGE_OPTIONS = [
+  '200 mg',
+  '400 mg',
+  '500 mg',
+  '5 mg',
+  '10 mg',
+  '20 mg',
+  '1 tablet',
+  '2 tablets',
+];
+
+const FREQUENCY_OPTIONS = [
+  'Once daily',
+  'BID',
+  'TID',
+  'QID',
+  'Every 6 hours',
+  'Every 8 hours',
+  'PRN',
+];
+
+const LAB_PRIORITY_OPTIONS = ['Routine', 'Urgent', 'STAT'];
 
 export default function UnifiedClinicalAnalysis({
   patientId,
@@ -94,39 +189,143 @@ export default function UnifiedClinicalAnalysis({
   
   // Document management
   const [documents, setDocuments] = useState<PatientDocument[]>([]);
+  const [encounters, setEncounters] = useState<Encounter[]>([]);
+  const [soapNotes, setSoapNotes] = useState<SoapNote[]>([]);
   const [isUploading, setIsUploading] = useState(false);
   const [viewingDocument, setViewingDocument] = useState<{ filename: string; content: string } | null>(null);
+  const [viewingEncounter, setViewingEncounter] = useState<Encounter | null>(null);
+  const [viewingSoapNote, setViewingSoapNote] = useState<SoapNote | null>(null);
   const [isLoadingDocument, setIsLoadingDocument] = useState(false);
+  const [medicationName, setMedicationName] = useState('');
+  const [medicationDosage, setMedicationDosage] = useState('');
+  const [medicationFrequency, setMedicationFrequency] = useState('');
+  const [prescriptions, setPrescriptions] = useState<PrescriptionItem[]>([]);
+  const [medicationAiInput, setMedicationAiInput] = useState('');
+  const [isParsingMedication, setIsParsingMedication] = useState(false);
+  const [isMedicationAiOpen, setIsMedicationAiOpen] = useState(true);
+  const [isMedicationManualOpen, setIsMedicationManualOpen] = useState(false);
+  const [labTest, setLabTest] = useState('');
+  const [labPriority, setLabPriority] = useState('');
+  const [labOrders, setLabOrders] = useState<LabOrderItem[]>([]);
+  const [labAiInput, setLabAiInput] = useState('');
+  const [isParsingLab, setIsParsingLab] = useState(false);
+  const [isLabAiOpen, setIsLabAiOpen] = useState(true);
+  const [isLabManualOpen, setIsLabManualOpen] = useState(false);
+  const [isVitalsDialogOpen, setIsVitalsDialogOpen] = useState(false);
+  const [isSavingVitals, setIsSavingVitals] = useState(false);
+  const [manualVitals, setManualVitals] = useState<ClinicalDataSources['recent_vitals'] | null>(null);
+  const [vitalsForm, setVitalsForm] = useState({
+    systolic: '',
+    diastolic: '',
+    hr: '',
+    o2: '',
+    weight: '',
+    recordedAt: '',
+  });
   
-  // Symptoms management  
+  // Symptoms (legacy table, kept for backwards compatibility)
   const [symptoms, setSymptoms] = useState<Array<{ id: string; description: string; onset_date: string | null; severity: number | null }>>([]);
-  const [symptomReports, setSymptomReports] = useState<Array<{
-    id: string;
-    primary_symptom: string;
-    onset_text: string | null;
-    severity: number | null;
-    progression: string | null;
-    associated_symptoms: string[] | null;
-    red_flags: Record<string, boolean> | null;
-    full_report: string;
-    full_transcript: string | null;
-    created_at: string;
-  }>>([]);
-  const [viewingSymptomReport, setViewingSymptomReport] = useState<{
-    primary_symptom: string;
-    onset_text: string | null;
-    severity: number | null;
-    progression: string | null;
-    associated_symptoms: string[] | null;
-    red_flags: Record<string, boolean> | null;
-    full_report: string;
-    full_transcript: string | null;
-    created_at: string;
-  } | null>(null);
   
   const fileInputRef = useRef<HTMLInputElement>(null);
   const isDoctor = profile?.role === 'doctor';
+  const recentDays = 60;
   const analysisStorageKey = `docassist:analysis:${patientId}`;
+
+  const formatDisplayDate = (dateValue?: string | null) => {
+    if (!dateValue) return 'Unknown date';
+    const parsed = new Date(dateValue);
+    if (Number.isNaN(parsed.getTime())) return dateValue;
+    return parsed.toLocaleDateString();
+  };
+
+  const normalizeMatch = (value: string) =>
+    value.toLowerCase().replace(/[^a-z0-9]/g, '');
+
+  const matchOption = (value: string, options: string[]) => {
+    const normalized = normalizeMatch(value);
+    return (
+      options.find((option) => {
+        const optionNormalized = normalizeMatch(option);
+        return optionNormalized.includes(normalized) || normalized.includes(optionNormalized);
+      }) || ''
+    );
+  };
+
+  const renderInsightWithSources = (text: string) => {
+    const parts = text.split(/(\([^)]*\))/g).filter(Boolean);
+    return parts.map((part, index) => {
+      const isSource = part.startsWith('(') && part.endsWith(')');
+      if (!isSource) {
+        return <span key={`text-${index}`}>{part}</span>;
+      }
+      return (
+        <span
+          key={`src-${index}`}
+          className="inline-block text-[10px] leading-4 bg-amber-100 text-amber-900 dark:bg-amber-900/30 dark:text-amber-100 px-1.5 py-0.5 rounded-sm border border-amber-200/60 dark:border-amber-800/60 align-baseline"
+        >
+          {part}
+        </span>
+      );
+    });
+  };
+
+  const buildDataSources = (
+    clinicalSummary: Awaited<ReturnType<typeof getPatientClinicalSummary>> | null,
+    detectedAlerts: Awaited<ReturnType<typeof getDetectedAlerts>> | null
+  ): ClinicalDataSources | null => {
+    if (!clinicalSummary) return null;
+    return {
+      diagnoses: clinicalSummary.diagnoses || [],
+      medications: clinicalSummary.medications || [],
+      recent_labs: clinicalSummary.recent_labs || [],
+      recent_vitals: clinicalSummary.recent_vitals || null,
+      active_symptoms: clinicalSummary.active_symptoms || [],
+      detected_alerts: detectedAlerts || [],
+    };
+  };
+
+  const documentItems = useMemo<DocumentItem[]>(() => {
+    const encounterById = new Map(encounters.map((encounter) => [encounter.id, encounter]));
+    const docs: DocumentItem[] = documents.map((doc) => ({
+      kind: 'document',
+      id: doc.id,
+      title: doc.filename,
+      subtitle: doc.doc_type,
+      date: doc.created_at,
+      document: doc,
+    }));
+    const encounterItems: DocumentItem[] = encounters.map((encounter) => ({
+      kind: 'encounter',
+      id: encounter.id,
+      title: encounter.chief_complaint || 'Encounter',
+      subtitle: [encounter.provider_name, encounter.specialty].filter(Boolean).join(' • ') || 'Encounter',
+      date: encounter.encounter_date,
+      encounter,
+    }));
+    const soapItems: DocumentItem[] = soapNotes.map((soap) => {
+      const encounter = encounterById.get(soap.encounter_id);
+      const soapDate = encounter?.encounter_date || soap.created_at || '';
+      const subtitle = [encounter?.provider_name, encounter?.specialty]
+        .filter(Boolean)
+        .join(' • ') || 'SOAP Note';
+      return {
+        kind: 'soap',
+        id: soap.id,
+        title: 'SOAP Note',
+        subtitle,
+        date: soapDate,
+        soapNote: soap,
+      };
+    });
+
+    return [...docs, ...encounterItems, ...soapItems].sort((a, b) => {
+      const aTimeRaw = new Date(a.date).getTime();
+      const bTimeRaw = new Date(b.date).getTime();
+      const aTime = Number.isNaN(aTimeRaw) ? 0 : aTimeRaw;
+      const bTime = Number.isNaN(bTimeRaw) ? 0 : bTimeRaw;
+      return bTime - aTime;
+    });
+  }, [documents, encounters, soapNotes]);
 
   const saveSessionAnalysis = (payload: {
     brief?: BriefContent | null;
@@ -134,6 +333,8 @@ export default function UnifiedClinicalAnalysis({
     evaluations?: EvaluationSummary | null;
     chiefComplaint?: string;
     dataSources?: ClinicalDataSources | null;
+    prescriptions?: PrescriptionItem[];
+    labOrders?: LabOrderItem[];
   }) => {
     if (typeof window === 'undefined') return;
     sessionStorage.setItem(
@@ -144,6 +345,8 @@ export default function UnifiedClinicalAnalysis({
         evaluations: payload.evaluations ?? null,
         chiefComplaint: payload.chiefComplaint ?? '',
         dataSources: payload.dataSources ?? null,
+        prescriptions: payload.prescriptions ?? [],
+        labOrders: payload.labOrders ?? [],
       })
     );
   };
@@ -177,6 +380,18 @@ export default function UnifiedClinicalAnalysis({
     }
   };
 
+  const handleViewItem = (item: DocumentItem) => {
+    if (item.kind === 'document') {
+      handleViewDocument(item.document.id, item.document.filename);
+      return;
+    }
+    if (item.kind === 'encounter') {
+      setViewingEncounter(item.encounter);
+      return;
+    }
+    setViewingSoapNote(item.soapNote);
+  };
+
   // Load documents
   const loadDocuments = async () => {
     const { data } = await supabase
@@ -187,6 +402,34 @@ export default function UnifiedClinicalAnalysis({
     setDocuments(data || []);
   };
 
+  const loadEncounters = async () => {
+    const since = new Date();
+    since.setDate(since.getDate() - recentDays);
+    const sinceDate = since.toISOString().split('T')[0];
+
+    const { data } = await supabase
+      .from('encounters')
+      .select('id, patient_id, encounter_date, encounter_type, specialty, chief_complaint, provider_name, source_document_id, created_at')
+      .eq('patient_id', patientId)
+      .gte('encounter_date', sinceDate)
+      .order('encounter_date', { ascending: false });
+    setEncounters(data || []);
+  };
+
+  const loadSoapNotes = async () => {
+    const since = new Date();
+    since.setDate(since.getDate() - recentDays);
+    const sinceIso = since.toISOString();
+
+    const { data } = await supabase
+      .from('soap_notes')
+      .select('id, encounter_id, patient_id, subjective, objective, assessment, plan, created_by_profile_id, created_at')
+      .eq('patient_id', patientId)
+      .gte('created_at', sinceIso)
+      .order('created_at', { ascending: false });
+    setSoapNotes(data || []);
+  };
+
   // Load symptoms from symptoms table (for backwards compatibility)
   const loadSymptoms = async () => {
     const { data } = await supabase
@@ -195,29 +438,6 @@ export default function UnifiedClinicalAnalysis({
       .eq('patient_id', patientId)
       .order('created_at', { ascending: false });
     setSymptoms(data || []);
-  };
-
-  // Load full symptom reports
-  const loadSymptomReports = async () => {
-    try {
-      // Use type assertion for the new table that TypeScript doesn't know about yet
-      const { data, error } = await (supabase as any)
-        .from('symptom_reports')
-        .select('id, primary_symptom, onset_text, severity, progression, associated_symptoms, red_flags, full_report, full_transcript, created_at')
-        .eq('patient_id', patientId)
-        .order('created_at', { ascending: false });
-      
-      if (!error && data) {
-        setSymptomReports(data);
-      }
-    } catch (error) {
-      console.error('Error loading symptom reports:', error);
-    }
-  };
-
-  // View full symptom report details
-  const handleViewSymptomReport = (report: typeof symptomReports[0]) => {
-    setViewingSymptomReport(report);
   };
 
   // Handle file upload
@@ -261,11 +481,12 @@ export default function UnifiedClinicalAnalysis({
     }
   };
 
-  // Load documents, symptoms, and symptom reports on mount
+  // Load documents, encounters, and symptoms on mount
   useEffect(() => {
     loadDocuments();
+    loadEncounters();
+    loadSoapNotes();
     loadSymptoms();
-    loadSymptomReports();
   }, [patientId]);
 
   // Restore analysis for this login session
@@ -281,12 +502,16 @@ export default function UnifiedClinicalAnalysis({
         evaluations?: EvaluationSummary | null;
         chiefComplaint?: string;
         dataSources?: ClinicalDataSources | null;
+        prescriptions?: PrescriptionItem[];
+        labOrders?: LabOrderItem[];
       };
       if (parsed.brief) setBrief(parsed.brief);
       if (parsed.deepAnalysis) setDeepAnalysis(parsed.deepAnalysis);
       if (parsed.evaluations) setEvaluations(parsed.evaluations);
       if (parsed.chiefComplaint) setChiefComplaint(parsed.chiefComplaint);
       if (parsed.dataSources) setDataSources(parsed.dataSources);
+      if (parsed.prescriptions) setPrescriptions(parsed.prescriptions);
+      if (parsed.labOrders) setLabOrders(parsed.labOrders);
     } catch (error) {
       console.error('Error restoring session analysis:', error);
     }
@@ -386,15 +611,9 @@ export default function UnifiedClinicalAnalysis({
       ]);
 
       // Store for Sources tab
-      if (clinicalSummary) {
-        setDataSources({
-          diagnoses: clinicalSummary.diagnoses || [],
-          medications: clinicalSummary.medications || [],
-          recent_labs: clinicalSummary.recent_labs || [],
-          recent_vitals: clinicalSummary.recent_vitals || null,
-          active_symptoms: clinicalSummary.active_symptoms || [],
-          detected_alerts: detectedAlerts || [],
-        });
+      const nextDataSources = buildDataSources(clinicalSummary, detectedAlerts);
+      if (nextDataSources) {
+        setDataSources(nextDataSources);
       }
 
       if (depth === 'quick') {
@@ -414,16 +633,9 @@ export default function UnifiedClinicalAnalysis({
           brief: newBrief,
           evaluations: summary,
           chiefComplaint,
-          dataSources: clinicalSummary
-            ? {
-                diagnoses: clinicalSummary.diagnoses || [],
-                medications: clinicalSummary.medications || [],
-                recent_labs: clinicalSummary.recent_labs || [],
-                recent_vitals: clinicalSummary.recent_vitals || null,
-                active_symptoms: clinicalSummary.active_symptoms || [],
-                detected_alerts: detectedAlerts || [],
-              }
-            : dataSources,
+          dataSources: nextDataSources || dataSources,
+          prescriptions,
+          labOrders,
         });
 
         toast.success(
@@ -454,16 +666,9 @@ export default function UnifiedClinicalAnalysis({
             deepAnalysis: result,
             brief: quickBrief,
             chiefComplaint,
-            dataSources: clinicalSummary
-              ? {
-                  diagnoses: clinicalSummary.diagnoses || [],
-                  medications: clinicalSummary.medications || [],
-                  recent_labs: clinicalSummary.recent_labs || [],
-                  recent_vitals: clinicalSummary.recent_vitals || null,
-                  active_symptoms: clinicalSummary.active_symptoms || [],
-                  detected_alerts: detectedAlerts || [],
-                }
-              : dataSources,
+            dataSources: nextDataSources || dataSources,
+            prescriptions,
+            labOrders,
           });
 
           toast.success('Deep analysis complete');
@@ -489,7 +694,308 @@ export default function UnifiedClinicalAnalysis({
     setDataSources(null);
     setClinicalNotes('');
     setChiefComplaint('');
+    setPrescriptions([]);
+    setLabOrders([]);
     clearSessionAnalysis();
+  };
+
+  const getDefaultVitalsTimestamp = (value?: string | null) => {
+    if (!value) return new Date().toISOString().slice(0, 16);
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) return new Date().toISOString().slice(0, 16);
+    return parsed.toISOString().slice(0, 16);
+  };
+
+  const parseBp = (bp?: string | null) => {
+    if (!bp) return { systolic: '', diastolic: '' };
+    const match = bp.match(/(\d{2,3})\s*\/\s*(\d{2,3})/);
+    if (!match) return { systolic: '', diastolic: '' };
+    return { systolic: match[1], diastolic: match[2] };
+  };
+
+  const openVitalsDialog = () => {
+    const parsedBp = parseBp(manualVitals?.bp);
+    setVitalsForm({
+      systolic: parsedBp.systolic,
+      diastolic: parsedBp.diastolic,
+      hr: manualVitals?.hr?.toString() || '',
+      o2: manualVitals?.o2?.toString() || '',
+      weight: manualVitals?.weight_kg?.toString() || '',
+      recordedAt: getDefaultVitalsTimestamp(manualVitals?.date),
+    });
+    setIsVitalsDialogOpen(true);
+  };
+
+  const refreshClinicalSummary = async () => {
+    const [clinicalSummary, detectedAlerts] = await Promise.all([
+      getPatientClinicalSummary(patientId),
+      getDetectedAlerts(patientId),
+    ]);
+    const nextDataSources = buildDataSources(clinicalSummary, detectedAlerts);
+    if (nextDataSources) {
+      setDataSources(nextDataSources);
+    }
+  };
+
+  const toNumberOrNull = (value: string) => {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  };
+
+  const handleSaveVitals = async () => {
+    if (!isDoctor) return;
+    setIsSavingVitals(true);
+    try {
+      const recordedAt = vitalsForm.recordedAt
+        ? new Date(vitalsForm.recordedAt).toISOString()
+        : new Date().toISOString();
+      const { error } = await supabase.from('vitals' as any).insert({
+        patient_id: patientId,
+        recorded_at: recordedAt,
+        systolic_bp: toNumberOrNull(vitalsForm.systolic),
+        diastolic_bp: toNumberOrNull(vitalsForm.diastolic),
+        heart_rate: toNumberOrNull(vitalsForm.hr),
+        o2_saturation: toNumberOrNull(vitalsForm.o2),
+        weight: toNumberOrNull(vitalsForm.weight),
+      });
+
+      if (error) throw error;
+
+      setManualVitals({
+        bp: vitalsForm.systolic && vitalsForm.diastolic ? `${vitalsForm.systolic}/${vitalsForm.diastolic}` : '',
+        hr: toNumberOrNull(vitalsForm.hr) ?? 0,
+        o2: toNumberOrNull(vitalsForm.o2) ?? 0,
+        weight_kg: toNumberOrNull(vitalsForm.weight) ?? 0,
+        date: recordedAt,
+      });
+      toast.success('Vitals updated');
+      setIsVitalsDialogOpen(false);
+    } catch (error) {
+      console.error('Error saving vitals:', error);
+      toast.error('Failed to save vitals');
+    } finally {
+      setIsSavingVitals(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!isDoctor) return;
+    refreshClinicalSummary();
+  }, [patientId, isDoctor]);
+
+  const addPrescription = () => {
+    if (!medicationName.trim() || !medicationDosage || !medicationFrequency) {
+      toast.error('Select medication, dosage, and frequency');
+      return;
+    }
+    setPrescriptions((prev) => {
+      const next = [
+        ...prev,
+        {
+          id: crypto.randomUUID(),
+          name: medicationName.trim(),
+          dosage: medicationDosage,
+          frequency: medicationFrequency,
+        },
+      ];
+      saveSessionAnalysis({
+        brief,
+        deepAnalysis,
+        evaluations,
+        chiefComplaint,
+        dataSources,
+        prescriptions: next,
+        labOrders,
+      });
+      return next;
+    });
+    setMedicationName('');
+    setMedicationDosage('');
+    setMedicationFrequency('');
+  };
+
+  const removePrescription = (id: string) => {
+    setPrescriptions((prev) => {
+      const next = prev.filter((item) => item.id !== id);
+      saveSessionAnalysis({
+        brief,
+        deepAnalysis,
+        evaluations,
+        chiefComplaint,
+        dataSources,
+        prescriptions: next,
+        labOrders,
+      });
+      return next;
+    });
+  };
+
+  const submitPrescriptions = () => {
+    if (prescriptions.length === 0) {
+      toast.error('Add at least one prescription');
+      return;
+    }
+    saveSessionAnalysis({
+      brief,
+      deepAnalysis,
+      evaluations,
+      chiefComplaint,
+      dataSources,
+      prescriptions,
+      labOrders,
+    });
+    toast.success('Prescriptions saved');
+  };
+
+  const addLabOrder = () => {
+    if (!labTest || !labPriority) {
+      toast.error('Select lab test and priority');
+      return;
+    }
+    setLabOrders((prev) => {
+      const next = [
+        ...prev,
+        {
+          id: crypto.randomUUID(),
+          test: labTest,
+          priority: labPriority,
+        },
+      ];
+      saveSessionAnalysis({
+        brief,
+        deepAnalysis,
+        evaluations,
+        chiefComplaint,
+        dataSources,
+        prescriptions,
+        labOrders: next,
+      });
+      return next;
+    });
+    setLabTest('');
+    setLabPriority('');
+  };
+
+  const removeLabOrder = (id: string) => {
+    setLabOrders((prev) => {
+      const next = prev.filter((item) => item.id !== id);
+      saveSessionAnalysis({
+        brief,
+        deepAnalysis,
+        evaluations,
+        chiefComplaint,
+        dataSources,
+        prescriptions,
+        labOrders: next,
+      });
+      return next;
+    });
+  };
+
+  const submitLabOrders = () => {
+    if (labOrders.length === 0) {
+      toast.error('Add at least one lab order');
+      return;
+    }
+    saveSessionAnalysis({
+      brief,
+      deepAnalysis,
+      evaluations,
+      chiefComplaint,
+      dataSources,
+      prescriptions,
+      labOrders,
+    });
+    toast.success('Lab orders saved');
+  };
+
+  const parseMedicationInput = async () => {
+    if (!medicationAiInput.trim()) {
+      toast.error('Enter a medication request');
+      return;
+    }
+    setIsParsingMedication(true);
+    try {
+      const result = await parseMedicationOrders(medicationAiInput.trim());
+      const parsed = result.medications || [];
+      if (parsed.length === 0) {
+        toast.error('No medications found');
+        return;
+      }
+      setPrescriptions((prev) => {
+        const next = [
+          ...prev,
+          ...parsed.map((med) => ({
+            id: crypto.randomUUID(),
+            name: med.name,
+            dosage: med.dosage || 'Unspecified',
+            frequency: med.frequency || 'Unspecified',
+          })),
+        ];
+        saveSessionAnalysis({
+          brief,
+          deepAnalysis,
+          evaluations,
+          chiefComplaint,
+          dataSources,
+          prescriptions: next,
+          labOrders,
+        });
+        return next;
+      });
+      setMedicationAiInput('');
+      setIsMedicationAiOpen(false);
+      toast.success('Medication parsed');
+    } catch (error) {
+      console.error('Medication parse error:', error);
+      toast.error('Failed to parse medication');
+    } finally {
+      setIsParsingMedication(false);
+    }
+  };
+
+  const parseLabInput = async () => {
+    if (!labAiInput.trim()) {
+      toast.error('Enter a lab request');
+      return;
+    }
+    setIsParsingLab(true);
+    try {
+      const result = await parseLabOrders(labAiInput.trim());
+      const parsed = result.labs || [];
+      if (parsed.length === 0) {
+        toast.error('No labs found');
+        return;
+      }
+      setLabOrders((prev) => {
+        const next = [
+          ...prev,
+          ...parsed.map((lab) => ({
+            id: crypto.randomUUID(),
+            test: matchOption(lab.test, LAB_TEST_OPTIONS) || lab.test,
+            priority: matchOption(lab.priority || '', LAB_PRIORITY_OPTIONS) || 'Routine',
+          })),
+        ];
+        saveSessionAnalysis({
+          brief,
+          deepAnalysis,
+          evaluations,
+          chiefComplaint,
+          dataSources,
+          prescriptions,
+          labOrders: next,
+        });
+        return next;
+      });
+      setLabAiInput('');
+      setIsLabAiOpen(false);
+      toast.success('Labs parsed');
+    } catch (error) {
+      console.error('Lab parse error:', error);
+      toast.error('Failed to parse labs');
+    } finally {
+      setIsParsingLab(false);
+    }
   };
 
   if (brief || deepAnalysis) {
@@ -512,6 +1018,12 @@ export default function UnifiedClinicalAnalysis({
                 patientId={patientId}
                 brief={brief}
                 patientName={patientName}
+                prescriptions={prescriptions}
+                labOrders={labOrders}
+                vitals={manualVitals}
+                onSubmitted={async () => {
+                  await Promise.all([loadSoapNotes(), loadEncounters()]);
+                }}
               />
             )}
             <Button variant="outline" size="sm" onClick={handleReset}>
@@ -591,7 +1103,7 @@ export default function UnifiedClinicalAnalysis({
 
             {/* Clinical Reasoning - Expandable with Citation Validation */}
             {brief?.clinicalInsights && brief.clinicalInsights.length > 0 && (
-              <details className="group">
+              <details className="group" open>
                 <summary className="flex items-center justify-between p-3 bg-muted/50 rounded-lg cursor-pointer hover:bg-muted transition-colors">
                   <span className="text-sm font-medium flex items-center gap-2">
                     <FileText className="h-4 w-4" />
@@ -602,16 +1114,25 @@ export default function UnifiedClinicalAnalysis({
                 <div className="mt-2 p-4 bg-muted/30 rounded-lg space-y-2">
                   {brief.clinicalInsights.map((insight, i) => (
                     <p key={i} className="text-sm leading-relaxed">
-                      • {insight}
+                      • {renderInsightWithSources(insight)}
                     </p>
                   ))}
                 </div>
               </details>
             )}
 
+            {evaluations && (
+              <div className="flex items-center justify-between px-3 py-2 bg-muted/50 rounded-lg">
+                <span className="text-xs text-muted-foreground">AI Confidence</span>
+                <Badge variant={evaluations.overallScore >= 0.8 ? 'secondary' : 'destructive'} className="text-xs">
+                  {(evaluations.overallScore * 100).toFixed(0)}%
+                </Badge>
+              </div>
+            )}
+
             {/* Deep Analysis - Expandable */}
             {deepAnalysis && (
-              <details className="group" open>
+              <details className="group">
                 <summary className="flex items-center justify-between p-3 bg-primary/10 rounded-lg cursor-pointer hover:bg-primary/20 transition-colors">
                   <span className="text-sm font-medium flex items-center gap-2">
                     <Brain className="h-4 w-4 text-primary" />
@@ -643,23 +1164,396 @@ export default function UnifiedClinicalAnalysis({
               </details>
             )}
 
-            {/* AI Analysis Assistant - Always visible when analysis is complete */}
-            <AnalysisChatbot
-              patientId={patientId}
-              patientName={patientName}
-              deepAnalysis={deepAnalysis}
-              brief={brief}
-              dataSources={dataSources}
-              chiefComplaint={chiefComplaint}
-              clinicalNotes={clinicalNotes}
-              onAnalysisUpdate={setDeepAnalysis}
-            />
+            {/* AI Analysis Assistant - Collapsible */}
+            <details className="group">
+              <summary className="flex items-center justify-between p-3 bg-muted/50 rounded-lg cursor-pointer hover:bg-muted transition-colors">
+                <span className="text-sm font-medium flex items-center gap-2">
+                  <Brain className="h-4 w-4" />
+                  AI Analysis Assistant
+                </span>
+                <ChevronDown className="h-4 w-4 transition-transform group-open:rotate-180" />
+              </summary>
+              <div className="mt-2">
+                <AnalysisChatbot
+                  patientId={patientId}
+                  patientName={patientName}
+                  deepAnalysis={deepAnalysis}
+                  brief={brief}
+                  dataSources={dataSources}
+                  encounters={encounters}
+                  soapNotes={soapNotes}
+                  vitalsOverride={manualVitals}
+                  chiefComplaint={chiefComplaint}
+                  clinicalNotes={clinicalNotes}
+                  onAnalysisUpdate={setDeepAnalysis}
+                />
+              </div>
+            </details>
+
+            {/* Actions: Medications & Lab Orders */}
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-base">Clinical Actions</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="flex gap-2">
+                  <Dialog>
+                    <DialogTrigger asChild>
+                      <Button variant="outline" className="flex-1">
+                        <Pill className="h-4 w-4 mr-2" />
+                        Prescribe Medication
+                      </Button>
+                    </DialogTrigger>
+                    <DialogContent>
+                      <DialogHeader>
+                        <DialogTitle>Prescribe Medication</DialogTitle>
+                      </DialogHeader>
+                      <div className="space-y-4">
+                        <div className="border-b pb-2 text-xs font-medium uppercase text-muted-foreground">
+                          Prescription Details
+                        </div>
+                        <details
+                          open={isMedicationAiOpen}
+                          onToggle={(event) => setIsMedicationAiOpen(event.currentTarget.open)}
+                          className="rounded-lg border border-muted-foreground/20 p-3"
+                        >
+                          <summary className="text-sm font-medium cursor-pointer">AI parse</summary>
+                          <div className="space-y-2 mt-3">
+                            <div className="flex items-start gap-2">
+                              <Textarea
+                                value={medicationAiInput}
+                                onChange={(e) => setMedicationAiInput(e.target.value)}
+                                placeholder="e.g., Start Advil 400 mg BID for 3 days"
+                                rows={2}
+                              />
+                              <VoiceInputButton
+                                onTranscript={setMedicationAiInput}
+                                currentValue={medicationAiInput}
+                                appendMode={false}
+                                size="icon"
+                                showStatus={false}
+                              />
+                            </div>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              className="w-full"
+                              onClick={parseMedicationInput}
+                              disabled={isParsingMedication}
+                            >
+                              {isParsingMedication ? (
+                                <>
+                                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                                  Parsing...
+                                </>
+                              ) : (
+                                'Parse with AI'
+                              )}
+                            </Button>
+                          </div>
+                        </details>
+                        <details
+                          open={isMedicationManualOpen}
+                          onToggle={(event) => setIsMedicationManualOpen(event.currentTarget.open)}
+                          className="rounded-lg border border-muted-foreground/20 p-3"
+                        >
+                          <summary className="text-sm font-medium cursor-pointer">Manual entry</summary>
+                          <div className="space-y-4 mt-3">
+                            <div>
+                              <label className="text-sm font-medium">Medication</label>
+                              <div className="flex items-center gap-2">
+                                <Input
+                                  value={medicationName}
+                                  onChange={(e) => setMedicationName(e.target.value)}
+                                  placeholder="Type medication name..."
+                                />
+                                <VoiceInputButton
+                                  onTranscript={setMedicationName}
+                                  currentValue={medicationName}
+                                  appendMode={false}
+                                  size="icon"
+                                  showStatus={false}
+                                />
+                              </div>
+                              <div className="flex flex-wrap gap-2 mt-2">
+                                {COMMON_MEDICATIONS.map((med) => (
+                                  <Button
+                                    key={med}
+                                    type="button"
+                                    variant="outline"
+                                    size="sm"
+                                    className="h-7 px-2 text-xs"
+                                    onClick={() => setMedicationName(med)}
+                                  >
+                                    {med}
+                                  </Button>
+                                ))}
+                              </div>
+                            </div>
+                            <div>
+                              <label className="text-sm font-medium">Dosage</label>
+                              <Select value={medicationDosage} onValueChange={setMedicationDosage}>
+                                <SelectTrigger>
+                                  <SelectValue placeholder="Select dosage" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {DOSAGE_OPTIONS.map((option) => (
+                                    <SelectItem key={option} value={option}>
+                                      {option}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            </div>
+                            <div>
+                              <label className="text-sm font-medium">Frequency</label>
+                              <Select value={medicationFrequency} onValueChange={setMedicationFrequency}>
+                                <SelectTrigger>
+                                  <SelectValue placeholder="Select frequency" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {FREQUENCY_OPTIONS.map((option) => (
+                                    <SelectItem key={option} value={option}>
+                                      {option}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            </div>
+                            <Button className="w-full" onClick={addPrescription}>
+                              Add Prescription
+                            </Button>
+                          </div>
+                        </details>
+
+                        {prescriptions.length > 0 && (
+                          <div className="space-y-2">
+                            <div className="text-xs font-medium uppercase text-muted-foreground">Prescriptions</div>
+                            <div className="space-y-2">
+                              {prescriptions.map((item) => (
+                                <div key={item.id} className="flex items-center justify-between rounded border p-2 text-sm">
+                                  <div>
+                                    <div className="font-medium">{item.name}</div>
+                                    <div className="text-xs text-muted-foreground">{item.dosage} • {item.frequency}</div>
+                                  </div>
+                                  <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="sm"
+                                    className="text-xs"
+                                    onClick={() => removePrescription(item.id)}
+                                  >
+                                    Remove
+                                  </Button>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        <Button variant="outline" className="w-full" onClick={submitPrescriptions}>
+                          Submit Prescriptions
+                        </Button>
+                      </div>
+                    </DialogContent>
+                  </Dialog>
+
+                  <Dialog>
+                    <DialogTrigger asChild>
+                      <Button variant="outline" className="flex-1">
+                        <TestTube className="h-4 w-4 mr-2" />
+                        Order Labs
+                      </Button>
+                    </DialogTrigger>
+                    <DialogContent>
+                      <DialogHeader>
+                        <DialogTitle>Order Lab Tests</DialogTitle>
+                      </DialogHeader>
+                      <div className="space-y-4">
+                        <div className="border-b pb-2 text-xs font-medium uppercase text-muted-foreground">
+                          Lab Order Details
+                        </div>
+                        <details
+                          open={isLabAiOpen}
+                          onToggle={(event) => setIsLabAiOpen(event.currentTarget.open)}
+                          className="rounded-lg border border-muted-foreground/20 p-3"
+                        >
+                          <summary className="text-sm font-medium cursor-pointer">AI parse</summary>
+                          <div className="space-y-2 mt-3">
+                            <div className="flex items-start gap-2">
+                              <Textarea
+                                value={labAiInput}
+                                onChange={(e) => setLabAiInput(e.target.value)}
+                                placeholder="e.g., Order CBC and BMP STAT"
+                                rows={2}
+                              />
+                              <VoiceInputButton
+                                onTranscript={setLabAiInput}
+                                currentValue={labAiInput}
+                                appendMode={false}
+                                size="icon"
+                                showStatus={false}
+                              />
+                            </div>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              className="w-full"
+                              onClick={parseLabInput}
+                              disabled={isParsingLab}
+                            >
+                              {isParsingLab ? (
+                                <>
+                                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                                  Parsing...
+                                </>
+                              ) : (
+                                'Parse with AI'
+                              )}
+                            </Button>
+                          </div>
+                        </details>
+                        <details
+                          open={isLabManualOpen}
+                          onToggle={(event) => setIsLabManualOpen(event.currentTarget.open)}
+                          className="rounded-lg border border-muted-foreground/20 p-3"
+                        >
+                          <summary className="text-sm font-medium cursor-pointer">Manual entry</summary>
+                          <div className="space-y-4 mt-3">
+                            <div>
+                              <label className="text-sm font-medium">Lab Test</label>
+                              <div className="flex items-center gap-2">
+                                <Select value={labTest} onValueChange={setLabTest}>
+                                  <SelectTrigger>
+                                    <SelectValue placeholder="Select lab test" />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    {LAB_TEST_OPTIONS.map((option) => (
+                                      <SelectItem key={option} value={option}>
+                                        {option}
+                                      </SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                                <VoiceInputButton
+                                  onTranscript={(text) => {
+                                    const match = matchOption(text, LAB_TEST_OPTIONS);
+                                    if (match) {
+                                      setLabTest(match);
+                                    } else {
+                                      toast.error('No matching lab test found');
+                                    }
+                                  }}
+                                  appendMode={false}
+                                  size="icon"
+                                  showStatus={false}
+                                />
+                              </div>
+                            </div>
+                            <div>
+                              <label className="text-sm font-medium">Priority</label>
+                              <Select value={labPriority} onValueChange={setLabPriority}>
+                                <SelectTrigger>
+                                  <SelectValue placeholder="Select priority" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {LAB_PRIORITY_OPTIONS.map((option) => (
+                                    <SelectItem key={option} value={option}>
+                                      {option}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            </div>
+                            <Button className="w-full" onClick={addLabOrder}>
+                              Add Lab Order
+                            </Button>
+                          </div>
+                        </details>
+
+                        {labOrders.length > 0 && (
+                          <div className="space-y-2">
+                            <div className="text-xs font-medium uppercase text-muted-foreground">Lab Orders</div>
+                            <div className="space-y-2">
+                              {labOrders.map((item) => (
+                                <div key={item.id} className="flex items-center justify-between rounded border p-2 text-sm">
+                                  <div>
+                                    <div className="font-medium">{item.test}</div>
+                                    <div className="text-xs text-muted-foreground">{item.priority}</div>
+                                  </div>
+                                  <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="sm"
+                                    className="text-xs"
+                                    onClick={() => removeLabOrder(item.id)}
+                                  >
+                                    Remove
+                                  </Button>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        <Button variant="outline" className="w-full" onClick={submitLabOrders}>
+                          Submit Lab Orders
+                        </Button>
+                      </div>
+                    </DialogContent>
+                  </Dialog>
+                </div>
+              </CardContent>
+            </Card>
+
+            {(prescriptions.length > 0 || labOrders.length > 0) && (
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-base">Ordered Items</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-3 text-sm">
+                  {prescriptions.length > 0 && (
+                    <div>
+                      <div className="text-xs font-medium uppercase text-muted-foreground mb-2">Medications</div>
+                      <div className="space-y-2">
+                        {prescriptions.map((item) => (
+                          <div key={item.id} className="flex items-center justify-between rounded border p-2">
+                            <div>
+                              <div className="font-medium">{item.name}</div>
+                              <div className="text-xs text-muted-foreground">
+                                {item.dosage} • {item.frequency}
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {labOrders.length > 0 && (
+                    <div>
+                      <div className="text-xs font-medium uppercase text-muted-foreground mb-2">Lab Orders</div>
+                      <div className="space-y-2">
+                        {labOrders.map((item) => (
+                          <div key={item.id} className="flex items-center justify-between rounded border p-2">
+                            <div>
+                              <div className="font-medium">{item.test}</div>
+                              <div className="text-xs text-muted-foreground">{item.priority}</div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            )}
           </div>
 
           {/* Right Column - Patient Details */}
           <div className="space-y-3">
             {/* Vitals - Compact Grid */}
-            {dataSources?.recent_vitals && (
+            {(manualVitals || isDoctor) && (
               <Card>
                 <CardHeader className="py-2 px-3">
                   <div className="flex items-center justify-between">
@@ -667,32 +1561,65 @@ export default function UnifiedClinicalAnalysis({
                       <Activity className="h-3 w-3" />
                       Vitals
                     </CardTitle>
-                    {dataSources.recent_vitals.date && (
-                      <span className="text-[10px] text-muted-foreground">
-                        {new Date(dataSources.recent_vitals.date).toLocaleDateString()}
-                      </span>
-                    )}
+                    <div className="flex items-center gap-2">
+                      {manualVitals?.date && (
+                        <span className="text-[10px] text-muted-foreground">
+                          {new Date(manualVitals.date).toLocaleDateString()}
+                        </span>
+                      )}
+                      {isDoctor && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-6 px-2 text-[10px]"
+                          onClick={openVitalsDialog}
+                        >
+                          Update
+                        </Button>
+                      )}
+                    </div>
                   </div>
                 </CardHeader>
                 <CardContent className="px-3 pb-3">
-                  <div className="grid grid-cols-2 gap-2 text-center">
-                    <div className="bg-muted/50 rounded p-2">
-                      <div className="text-lg font-bold">{dataSources.recent_vitals.bp}</div>
-                      <div className="text-[10px] text-muted-foreground">BP</div>
+                  {manualVitals ? (
+                    <div className="grid grid-cols-2 gap-2 text-center">
+                      <div className="bg-muted/50 rounded p-2">
+                        <div className="text-lg font-bold">{manualVitals.bp || '----'}</div>
+                        <div className="text-[10px] text-muted-foreground">BP</div>
+                      </div>
+                      <div className="bg-muted/50 rounded p-2">
+                        <div className="text-lg font-bold">{manualVitals.hr || '----'}</div>
+                        <div className="text-[10px] text-muted-foreground">HR</div>
+                      </div>
+                      <div className="bg-muted/50 rounded p-2">
+                        <div className="text-lg font-bold">{manualVitals.o2 ? `${manualVitals.o2}%` : '----'}</div>
+                        <div className="text-[10px] text-muted-foreground">SpO2</div>
+                      </div>
+                      <div className="bg-muted/50 rounded p-2">
+                        <div className="text-lg font-bold">{manualVitals.weight_kg || '----'}</div>
+                        <div className="text-[10px] text-muted-foreground">kg</div>
+                      </div>
                     </div>
-                    <div className="bg-muted/50 rounded p-2">
-                      <div className="text-lg font-bold">{dataSources.recent_vitals.hr}</div>
-                      <div className="text-[10px] text-muted-foreground">HR</div>
+                  ) : (
+                    <div className="grid grid-cols-2 gap-2 text-center">
+                      <div className="bg-muted/50 rounded p-2">
+                        <div className="text-lg font-bold">----</div>
+                        <div className="text-[10px] text-muted-foreground">BP</div>
+                      </div>
+                      <div className="bg-muted/50 rounded p-2">
+                        <div className="text-lg font-bold">----</div>
+                        <div className="text-[10px] text-muted-foreground">HR</div>
+                      </div>
+                      <div className="bg-muted/50 rounded p-2">
+                        <div className="text-lg font-bold">----</div>
+                        <div className="text-[10px] text-muted-foreground">SpO2</div>
+                      </div>
+                      <div className="bg-muted/50 rounded p-2">
+                        <div className="text-lg font-bold">----</div>
+                        <div className="text-[10px] text-muted-foreground">kg</div>
+                      </div>
                     </div>
-                    <div className="bg-muted/50 rounded p-2">
-                      <div className="text-lg font-bold">{dataSources.recent_vitals.o2}%</div>
-                      <div className="text-[10px] text-muted-foreground">SpO2</div>
-                    </div>
-                    <div className="bg-muted/50 rounded p-2">
-                      <div className="text-lg font-bold">{dataSources.recent_vitals.weight_kg}</div>
-                      <div className="text-[10px] text-muted-foreground">kg</div>
-                    </div>
-                  </div>
+                  )}
                 </CardContent>
               </Card>
             )}
@@ -787,86 +1714,88 @@ export default function UnifiedClinicalAnalysis({
             )}
 
             {/* Quality Score - Small indicator */}
-            {evaluations && (
-              <div className="flex items-center justify-between px-3 py-2 bg-muted/50 rounded-lg">
-                <span className="text-xs text-muted-foreground">AI Confidence</span>
-                <Badge variant={evaluations.overallScore >= 0.8 ? 'secondary' : 'destructive'} className="text-xs">
-                  {(evaluations.overallScore * 100).toFixed(0)}%
-                </Badge>
-              </div>
-            )}
-
-            {/* Patient Documents & Symptom Reports - Stacked */}
-            <div className="space-y-3">
-              {/* Documents */}
-              <Card>
-                <CardHeader className="py-2 px-3">
-                  <CardTitle className="text-xs font-medium text-muted-foreground uppercase tracking-wide flex items-center justify-between">
-                    <div className="flex items-center gap-1">
-                      <FileText className="h-3 w-3" />
-                      Documents
-                      {documents.length > 0 && (
-                        <Badge variant="secondary" className="text-[10px] ml-1">{documents.length}</Badge>
-                      )}
-                    </div>
-                    <input
-                      ref={fileInputRef}
-                      type="file"
-                      accept=".pdf"
-                      onChange={handleFileUpload}
-                      className="hidden"
-                    />
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-6 w-6"
-                      onClick={() => fileInputRef.current?.click()}
-                      disabled={isUploading}
-                    >
-                      {isUploading ? (
-                        <Loader2 className="h-3 w-3 animate-spin" />
-                      ) : (
-                        <Upload className="h-3 w-3" />
-                      )}
-                    </Button>
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="px-3 pb-3">
-                  {documents.length === 0 ? (
-                    <div className="text-center py-4 text-xs text-muted-foreground">
-                      <File className="h-6 w-6 mx-auto mb-2 opacity-30" />
-                      <p>No documents</p>
-                    </div>
-                  ) : (
-                    <ScrollArea className="h-[120px]">
+            {/* Patient Documents - full right column */}
+            <Card className="flex flex-col min-h-0">
+              <CardHeader className="py-2 px-3">
+                <CardTitle className="text-xs font-medium text-muted-foreground uppercase tracking-wide flex items-center justify-between">
+                  <div className="flex items-center gap-1">
+                    <FileText className="h-3 w-3" />
+                    Documents
+                    {documentItems.length > 0 && (
+                      <Badge variant="secondary" className="text-[10px] ml-1">{documentItems.length}</Badge>
+                    )}
+                  </div>
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept=".pdf"
+                    onChange={handleFileUpload}
+                    className="hidden"
+                  />
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-6 w-6"
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={isUploading}
+                  >
+                    {isUploading ? (
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                    ) : (
+                      <Upload className="h-3 w-3" />
+                    )}
+                  </Button>
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="px-3 pb-3 flex-1 min-h-0 flex flex-col">
+                {documentItems.length === 0 ? (
+                  <div className="text-center py-8 text-xs text-muted-foreground">
+                    <File className="h-8 w-8 mx-auto mb-2 opacity-30" />
+                    <p>No recent documents or encounters</p>
+                  </div>
+                ) : (
+                  <ScrollArea className="h-[280px] flex-1">
                       <div className="space-y-1">
-                        {documents.map((doc) => (
+                        {documentItems.map((item) => (
                           <div
-                            key={doc.id}
+                            key={`${item.kind}-${item.id}`}
                             className="flex items-center justify-between text-sm p-2 rounded hover:bg-muted/50 group"
                           >
-                            <div 
-                              className="flex items-center gap-2 truncate flex-1 cursor-pointer"
-                              onClick={() => handleViewDocument(doc.id, doc.filename)}
+                            <div
+                              className="flex flex-col gap-0.5 truncate flex-1 cursor-pointer"
+                              onClick={() => handleViewItem(item)}
                             >
-                              <File className="h-3 w-3 flex-shrink-0" />
-                              <span className="truncate text-xs hover:underline">{doc.filename}</span>
+                              <div className="flex items-center gap-2 truncate">
+                                {item.kind === 'document' && <File className="h-3 w-3 flex-shrink-0" />}
+                                {item.kind === 'encounter' && <Stethoscope className="h-3 w-3 flex-shrink-0" />}
+                                {item.kind === 'soap' && <FileText className="h-3 w-3 flex-shrink-0" />}
+                                <span className="truncate text-xs hover:underline">{item.title}</span>
+                                <Badge variant="outline" className="text-[9px] h-4">
+                                  {item.kind === 'document' ? 'Document' : item.kind === 'encounter' ? 'Encounter' : 'SOAP'}
+                                </Badge>
+                              </div>
+                              <div className="text-[10px] text-muted-foreground truncate">
+                                {item.subtitle}
+                              </div>
+                              <div className="text-[10px] text-muted-foreground">
+                                {formatDisplayDate(item.date)}
+                              </div>
                             </div>
                             <div className="flex items-center gap-1">
                               <Button
                                 variant="ghost"
                                 size="icon"
                                 className="h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity"
-                                onClick={() => handleViewDocument(doc.id, doc.filename)}
+                                onClick={() => handleViewItem(item)}
                               >
                                 <Eye className="h-3 w-3" />
                               </Button>
-                              {isDoctor && (
+                              {isDoctor && item.kind === 'document' && (
                                 <Button
                                   variant="ghost"
                                   size="icon"
                                   className="h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity text-red-500 hover:text-red-600"
-                                  onClick={() => handleDeleteDocument(doc.id, doc.filename)}
+                                  onClick={() => handleDeleteDocument(item.document.id, item.document.filename)}
                                 >
                                   <Trash2 className="h-3 w-3" />
                                 </Button>
@@ -877,65 +1806,8 @@ export default function UnifiedClinicalAnalysis({
                       </div>
                     </ScrollArea>
                   )}
-                </CardContent>
-              </Card>
-
-              {/* Symptom Reports */}
-              <Card>
-                <CardHeader className="py-2 px-3">
-                  <CardTitle className="text-xs font-medium text-muted-foreground uppercase tracking-wide flex items-center gap-1">
-                    <Mic className="h-3 w-3" />
-                    Symptom Reports
-                    {symptomReports.length > 0 && (
-                      <Badge variant="secondary" className="text-[10px] ml-1">{symptomReports.length}</Badge>
-                    )}
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="px-3 pb-3">
-                  {symptomReports.length === 0 ? (
-                    <div className="text-center py-4 text-xs text-muted-foreground">
-                      <AlertTriangle className="h-6 w-6 mx-auto mb-2 opacity-30" />
-                      <p>No symptom reports</p>
-                    </div>
-                  ) : (
-                    <ScrollArea className="h-[120px]">
-                      <div className="space-y-2">
-                        {symptomReports.map((report) => (
-                          <div
-                            key={report.id}
-                            className="text-sm p-2 rounded hover:bg-muted/50 group cursor-pointer border border-muted"
-                            onClick={() => handleViewSymptomReport(report)}
-                          >
-                            <div className="flex items-start justify-between">
-                              <div className="flex-1">
-                                <div className="text-xs font-medium hover:underline flex items-center gap-2">
-                                  {report.primary_symptom}
-                                  {report.red_flags && Object.values(report.red_flags).some(v => v) && (
-                                    <Badge variant="destructive" className="text-[9px] h-4">RED FLAG</Badge>
-                                  )}
-                                </div>
-                                <div className="text-[10px] text-muted-foreground mt-1 flex flex-wrap gap-2">
-                                  {report.severity && (
-                                    <span className={report.severity >= 7 ? 'text-destructive font-medium' : ''}>
-                                      Severity: {report.severity}/10
-                                    </span>
-                                  )}
-                                  {report.onset_text && <span>Onset: {report.onset_text}</span>}
-                                </div>
-                                <div className="text-[10px] text-muted-foreground mt-0.5">
-                                  {new Date(report.created_at).toLocaleDateString()} {new Date(report.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                                </div>
-                              </div>
-                              <Eye className="h-3 w-3 opacity-0 group-hover:opacity-100 transition-opacity mt-1" />
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </ScrollArea>
-                  )}
-                </CardContent>
-              </Card>
-            </div>
+              </CardContent>
+            </Card>
           </div>
         </div>
 
@@ -956,131 +1828,74 @@ export default function UnifiedClinicalAnalysis({
           </DialogContent>
         </Dialog>
 
-        {/* Symptom Report Viewer Modal */}
-        <Dialog open={!!viewingSymptomReport} onOpenChange={() => setViewingSymptomReport(null)}>
-          <DialogContent className="max-w-2xl max-h-[90vh] p-0 overflow-hidden">
-            {viewingSymptomReport && (
-              <>
-                {/* Header with red flag indicator */}
-                <div className={`px-6 py-4 border-b ${viewingSymptomReport.red_flags && Object.values(viewingSymptomReport.red_flags).some(v => v) ? 'bg-destructive/10' : 'bg-muted/30'}`}>
-                  <DialogTitle className="flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                      <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center">
-                        <Mic className="h-5 w-5 text-primary" />
-                      </div>
-                      <div>
-                        <h2 className="text-lg font-semibold">Symptom Report</h2>
-                        <p className="text-xs text-muted-foreground">
-                          {new Date(viewingSymptomReport.created_at).toLocaleDateString()} at {new Date(viewingSymptomReport.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                        </p>
-                      </div>
-                    </div>
-                    {viewingSymptomReport.red_flags && Object.values(viewingSymptomReport.red_flags).some(v => v) && (
-                      <Badge variant="destructive" className="animate-pulse">⚠️ RED FLAGS</Badge>
-                    )}
-                  </DialogTitle>
-                </div>
-
-                <ScrollArea className="h-[70vh]">
-                  <div className="p-6 space-y-5">
-                    {/* Primary Complaint - Hero section */}
-                    <div className="bg-gradient-to-r from-primary/5 to-primary/10 rounded-xl p-4">
-                      <p className="text-xs uppercase tracking-wide text-muted-foreground mb-1">Chief Complaint</p>
-                      <h3 className="text-xl font-bold">{viewingSymptomReport.primary_symptom}</h3>
-                      
-                      {/* Stats row */}
-                      <div className="flex gap-4 mt-4">
-                        {viewingSymptomReport.severity && (
-                          <div className="flex items-center gap-2">
-                            <div className={`h-8 w-8 rounded-full flex items-center justify-center text-sm font-bold text-white ${
-                              viewingSymptomReport.severity >= 7 ? 'bg-destructive' : 
-                              viewingSymptomReport.severity >= 4 ? 'bg-amber-500' : 'bg-green-500'
-                            }`}>
-                              {viewingSymptomReport.severity}
-                            </div>
-                            <span className="text-sm text-muted-foreground">Severity</span>
-                          </div>
-                        )}
-                        {viewingSymptomReport.onset_text && (
-                          <div className="flex items-center gap-2 text-sm">
-                            <span className="text-muted-foreground">Onset:</span>
-                            <span className="font-medium">{viewingSymptomReport.onset_text}</span>
-                          </div>
-                        )}
-                        {viewingSymptomReport.progression && (
-                          <div className="flex items-center gap-2 text-sm">
-                            <span className="text-muted-foreground">Progression:</span>
-                            <span className="font-medium capitalize">{viewingSymptomReport.progression}</span>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-
-                    {/* Red Flags */}
-                    {viewingSymptomReport.red_flags && Object.entries(viewingSymptomReport.red_flags).some(([_, v]) => v) && (
-                      <div className="bg-destructive/5 border border-destructive/20 rounded-xl p-4">
-                        <p className="text-xs uppercase tracking-wide text-destructive font-medium mb-2 flex items-center gap-1">
-                          <AlertTriangle className="h-3 w-3" /> Red Flags Present
-                        </p>
-                        <div className="flex flex-wrap gap-2">
-                          {Object.entries(viewingSymptomReport.red_flags).filter(([_, v]) => v).map(([key]) => (
-                            <span key={key} className="inline-flex items-center gap-1 px-3 py-1.5 bg-destructive/10 text-destructive rounded-full text-sm font-medium">
-                              {key === 'fever' && '🌡️ Fever'}
-                              {key === 'chestPain' && '💔 Chest Pain'}
-                              {key === 'breathingDifficulty' && '😮‍💨 Breathing Difficulty'}
-                              {key === 'confusion' && '😵 Confusion'}
-                              {key === 'fainting' && '😵‍💫 Fainting'}
-                            </span>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Associated Symptoms */}
-                    {viewingSymptomReport.associated_symptoms && viewingSymptomReport.associated_symptoms.length > 0 && (
-                      <div>
-                        <p className="text-xs uppercase tracking-wide text-muted-foreground mb-2">Associated Symptoms</p>
-                        <div className="flex flex-wrap gap-2">
-                          {viewingSymptomReport.associated_symptoms.map((symptom, i) => (
-                            <Badge key={i} variant="secondary" className="text-sm px-3 py-1">
-                              {symptom}
-                            </Badge>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Patient's Words */}
-                    {viewingSymptomReport.full_transcript && (
-                      <div>
-                        <p className="text-xs uppercase tracking-wide text-muted-foreground mb-2 flex items-center gap-1">
-                          <Mic className="h-3 w-3" /> Patient's Own Words
-                        </p>
-                        <div className="bg-muted/50 rounded-xl p-4 border-l-4 border-primary/30">
-                          <p className="text-sm leading-relaxed whitespace-pre-line italic text-foreground/80">
-                            "{viewingSymptomReport.full_transcript}"
-                          </p>
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Full Report - Collapsible */}
-                    <details className="group">
-                      <summary className="flex items-center justify-between p-3 bg-muted/30 rounded-lg cursor-pointer hover:bg-muted/50 transition-colors text-sm">
-                        <span className="font-medium flex items-center gap-2">
-                          <FileText className="h-4 w-4" />
-                          View Full Structured Report
-                        </span>
-                        <ChevronDown className="h-4 w-4 transition-transform group-open:rotate-180" />
-                      </summary>
-                      <div className="mt-2 p-4 bg-muted/20 rounded-lg border">
-                        <pre className="text-xs whitespace-pre-wrap font-mono leading-relaxed">{viewingSymptomReport.full_report}</pre>
-                      </div>
-                    </details>
-                  </div>
-                </ScrollArea>
-              </>
-            )}
+        <Dialog open={isVitalsDialogOpen} onOpenChange={setIsVitalsDialogOpen}>
+          <DialogContent className="max-w-lg">
+            <DialogHeader>
+              <DialogTitle>Update Vitals</DialogTitle>
+            </DialogHeader>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-sm font-medium">Systolic BP</label>
+                <Input
+                  type="number"
+                  value={vitalsForm.systolic}
+                  onChange={(e) => setVitalsForm((prev) => ({ ...prev, systolic: e.target.value }))}
+                  placeholder="e.g., 120"
+                />
+              </div>
+              <div>
+                <label className="text-sm font-medium">Diastolic BP</label>
+                <Input
+                  type="number"
+                  value={vitalsForm.diastolic}
+                  onChange={(e) => setVitalsForm((prev) => ({ ...prev, diastolic: e.target.value }))}
+                  placeholder="e.g., 80"
+                />
+              </div>
+              <div>
+                <label className="text-sm font-medium">Heart Rate</label>
+                <Input
+                  type="number"
+                  value={vitalsForm.hr}
+                  onChange={(e) => setVitalsForm((prev) => ({ ...prev, hr: e.target.value }))}
+                  placeholder="e.g., 72"
+                />
+              </div>
+              <div>
+                <label className="text-sm font-medium">SpO2 %</label>
+                <Input
+                  type="number"
+                  value={vitalsForm.o2}
+                  onChange={(e) => setVitalsForm((prev) => ({ ...prev, o2: e.target.value }))}
+                  placeholder="e.g., 98"
+                />
+              </div>
+              <div>
+                <label className="text-sm font-medium">Weight (kg)</label>
+                <Input
+                  type="number"
+                  value={vitalsForm.weight}
+                  onChange={(e) => setVitalsForm((prev) => ({ ...prev, weight: e.target.value }))}
+                  placeholder="e.g., 70"
+                />
+              </div>
+              <div className="col-span-2">
+                <label className="text-sm font-medium">Recorded At</label>
+                <Input
+                  type="datetime-local"
+                  value={vitalsForm.recordedAt}
+                  onChange={(e) => setVitalsForm((prev) => ({ ...prev, recordedAt: e.target.value }))}
+                />
+              </div>
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setIsVitalsDialogOpen(false)} disabled={isSavingVitals}>
+                Cancel
+              </Button>
+              <Button onClick={handleSaveVitals} disabled={isSavingVitals}>
+                {isSavingVitals ? 'Saving...' : 'Save Vitals'}
+              </Button>
+            </div>
           </DialogContent>
         </Dialog>
       </div>
@@ -1120,77 +1935,88 @@ export default function UnifiedClinicalAnalysis({
         </p>
       </div>
 
-      {/* Patient Documents & Symptom Reports - Side by Side */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {/* Patient Documents */}
-        <Card>
-          <CardHeader className="py-3 px-4">
-            <CardTitle className="text-sm font-medium flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <FileText className="h-4 w-4" />
-                Documents
-                {documents.length > 0 && (
-                  <Badge variant="secondary" className="text-xs">{documents.length}</Badge>
-                )}
-              </div>
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept=".pdf"
-                onChange={handleFileUpload}
-                className="hidden"
-              />
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => fileInputRef.current?.click()}
-                disabled={isUploading}
-              >
-                {isUploading ? (
-                  <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                ) : (
-                  <Upload className="h-4 w-4 mr-2" />
-                )}
-                Upload
-              </Button>
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="px-4 pb-4 pt-0">
-            {documents.length === 0 ? (
-              <div className="text-center py-6 text-muted-foreground">
-                <File className="h-8 w-8 mx-auto mb-2 opacity-30" />
-                <p className="text-sm">No documents uploaded</p>
-              </div>
-            ) : (
-              <ScrollArea className="h-[150px]">
+      {/* Patient Documents - full width */}
+      <Card>
+        <CardHeader className="py-3 px-4">
+          <CardTitle className="text-sm font-medium flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <FileText className="h-4 w-4" />
+              Documents
+              {documentItems.length > 0 && (
+                <Badge variant="secondary" className="text-xs">{documentItems.length}</Badge>
+              )}
+            </div>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".pdf"
+              onChange={handleFileUpload}
+              className="hidden"
+            />
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={isUploading}
+            >
+              {isUploading ? (
+                <Loader2 className="h-4 w-4 animate-spin mr-2" />
+              ) : (
+                <Upload className="h-4 w-4 mr-2" />
+              )}
+              Upload
+            </Button>
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="px-4 pb-4 pt-0">
+          {documentItems.length === 0 ? (
+            <div className="text-center py-8 text-muted-foreground">
+              <File className="h-8 w-8 mx-auto mb-2 opacity-30" />
+              <p className="text-sm">No recent documents or encounters</p>
+            </div>
+          ) : (
+            <ScrollArea className="h-[280px]">
                 <div className="space-y-2">
-                  {documents.map((doc) => (
+                  {documentItems.map((item) => (
                     <div
-                      key={doc.id}
+                      key={`${item.kind}-${item.id}`}
                       className="flex items-center justify-between p-2 rounded-lg border hover:bg-muted/50 group"
                     >
-                      <div 
-                        className="flex items-center gap-2 truncate flex-1 cursor-pointer"
-                        onClick={() => handleViewDocument(doc.id, doc.filename)}
+                      <div
+                        className="flex flex-col gap-0.5 truncate flex-1 cursor-pointer"
+                        onClick={() => handleViewItem(item)}
                       >
-                        <File className="h-4 w-4 flex-shrink-0 text-muted-foreground" />
-                        <span className="truncate text-sm hover:underline">{doc.filename}</span>
+                        <div className="flex items-center gap-2 truncate">
+                          {item.kind === 'document' && <File className="h-4 w-4 flex-shrink-0 text-muted-foreground" />}
+                          {item.kind === 'encounter' && <Stethoscope className="h-4 w-4 flex-shrink-0 text-muted-foreground" />}
+                          {item.kind === 'soap' && <FileText className="h-4 w-4 flex-shrink-0 text-muted-foreground" />}
+                          <span className="truncate text-sm hover:underline">{item.title}</span>
+                          <Badge variant="outline" className="text-[10px] h-4">
+                            {item.kind === 'document' ? 'Document' : item.kind === 'encounter' ? 'Encounter' : 'SOAP'}
+                          </Badge>
+                        </div>
+                        <div className="text-[11px] text-muted-foreground truncate">
+                          {item.subtitle}
+                        </div>
+                        <div className="text-[11px] text-muted-foreground">
+                          {formatDisplayDate(item.date)}
+                        </div>
                       </div>
                       <div className="flex items-center gap-1">
                         <Button
                           variant="ghost"
                           size="icon"
                           className="h-7 w-7"
-                          onClick={() => handleViewDocument(doc.id, doc.filename)}
+                          onClick={() => handleViewItem(item)}
                         >
                           <Eye className="h-3.5 w-3.5" />
                         </Button>
-                        {isDoctor && (
+                        {isDoctor && item.kind === 'document' && (
                           <Button
                             variant="ghost"
                             size="icon"
                             className="h-7 w-7 text-red-500 hover:text-red-600"
-                            onClick={() => handleDeleteDocument(doc.id, doc.filename)}
+                            onClick={() => handleDeleteDocument(item.document.id, item.document.filename)}
                           >
                             <Trash2 className="h-3.5 w-3.5" />
                           </Button>
@@ -1201,191 +2027,8 @@ export default function UnifiedClinicalAnalysis({
                 </div>
               </ScrollArea>
             )}
-          </CardContent>
-        </Card>
-
-        {/* Patient Symptom Reports */}
-        <Card>
-          <CardHeader className="py-3 px-4">
-            <CardTitle className="text-sm font-medium flex items-center gap-2">
-              <Mic className="h-4 w-4" />
-              Symptom Reports
-              {symptomReports.length > 0 && (
-                <Badge variant="secondary" className="text-xs">{symptomReports.length}</Badge>
-              )}
-              {symptomReports.some(r => r.red_flags && Object.values(r.red_flags).some(v => v)) && (
-                <Badge variant="destructive" className="text-xs animate-pulse">RED FLAGS</Badge>
-              )}
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="px-4 pb-4 pt-0">
-            {symptomReports.length === 0 ? (
-              <div className="text-center py-6 text-muted-foreground">
-                <AlertTriangle className="h-8 w-8 mx-auto mb-2 opacity-30" />
-                <p className="text-sm">No symptom reports</p>
-              </div>
-            ) : (
-              <ScrollArea className="h-[150px]">
-                <div className="space-y-2">
-                  {symptomReports.map((report) => (
-                    <div
-                      key={report.id}
-                      className="p-2 rounded-lg border hover:bg-muted/50 cursor-pointer"
-                      onClick={() => handleViewSymptomReport(report)}
-                    >
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                          <span className="text-sm font-medium truncate">{report.primary_symptom}</span>
-                          {report.red_flags && Object.values(report.red_flags).some(v => v) && (
-                            <Badge variant="destructive" className="text-[10px] h-4">⚠️</Badge>
-                          )}
-                        </div>
-                        <Eye className="h-3.5 w-3.5 text-muted-foreground" />
-                      </div>
-                      <div className="text-[11px] text-muted-foreground mt-1 flex gap-2">
-                        {report.severity && (
-                          <span className={report.severity >= 7 ? 'text-destructive font-medium' : ''}>
-                            Severity: {report.severity}/10
-                          </span>
-                        )}
-                        <span>{new Date(report.created_at).toLocaleDateString()}</span>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </ScrollArea>
-            )}
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Symptom Report Viewer Modal for pre-analysis view */}
-      <Dialog open={!!viewingSymptomReport} onOpenChange={() => setViewingSymptomReport(null)}>
-        <DialogContent className="max-w-2xl max-h-[90vh] p-0 overflow-hidden">
-          {viewingSymptomReport && (
-            <>
-              {/* Header with red flag indicator */}
-              <div className={`px-6 py-4 border-b ${viewingSymptomReport.red_flags && Object.values(viewingSymptomReport.red_flags).some(v => v) ? 'bg-destructive/10' : 'bg-muted/30'}`}>
-                <DialogTitle className="flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center">
-                      <Mic className="h-5 w-5 text-primary" />
-                    </div>
-                    <div>
-                      <h2 className="text-lg font-semibold">Symptom Report</h2>
-                      <p className="text-xs text-muted-foreground">
-                        {new Date(viewingSymptomReport.created_at).toLocaleDateString()} at {new Date(viewingSymptomReport.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                      </p>
-                    </div>
-                  </div>
-                  {viewingSymptomReport.red_flags && Object.values(viewingSymptomReport.red_flags).some(v => v) && (
-                    <Badge variant="destructive" className="animate-pulse">⚠️ RED FLAGS</Badge>
-                  )}
-                </DialogTitle>
-              </div>
-
-              <ScrollArea className="h-[70vh]">
-                <div className="p-6 space-y-5">
-                  {/* Primary Complaint - Hero section */}
-                  <div className="bg-gradient-to-r from-primary/5 to-primary/10 rounded-xl p-4">
-                    <p className="text-xs uppercase tracking-wide text-muted-foreground mb-1">Chief Complaint</p>
-                    <h3 className="text-xl font-bold">{viewingSymptomReport.primary_symptom}</h3>
-                    
-                    {/* Stats row */}
-                    <div className="flex gap-4 mt-4">
-                      {viewingSymptomReport.severity && (
-                        <div className="flex items-center gap-2">
-                          <div className={`h-8 w-8 rounded-full flex items-center justify-center text-sm font-bold text-white ${
-                            viewingSymptomReport.severity >= 7 ? 'bg-destructive' : 
-                            viewingSymptomReport.severity >= 4 ? 'bg-amber-500' : 'bg-green-500'
-                          }`}>
-                            {viewingSymptomReport.severity}
-                          </div>
-                          <span className="text-sm text-muted-foreground">Severity</span>
-                        </div>
-                      )}
-                      {viewingSymptomReport.onset_text && (
-                        <div className="flex items-center gap-2 text-sm">
-                          <span className="text-muted-foreground">Onset:</span>
-                          <span className="font-medium">{viewingSymptomReport.onset_text}</span>
-                        </div>
-                      )}
-                      {viewingSymptomReport.progression && (
-                        <div className="flex items-center gap-2 text-sm">
-                          <span className="text-muted-foreground">Progression:</span>
-                          <span className="font-medium capitalize">{viewingSymptomReport.progression}</span>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Red Flags */}
-                  {viewingSymptomReport.red_flags && Object.entries(viewingSymptomReport.red_flags).some(([_, v]) => v) && (
-                    <div className="bg-destructive/5 border border-destructive/20 rounded-xl p-4">
-                      <p className="text-xs uppercase tracking-wide text-destructive font-medium mb-2 flex items-center gap-1">
-                        <AlertTriangle className="h-3 w-3" /> Red Flags Present
-                      </p>
-                      <div className="flex flex-wrap gap-2">
-                        {Object.entries(viewingSymptomReport.red_flags).filter(([_, v]) => v).map(([key]) => (
-                          <span key={key} className="inline-flex items-center gap-1 px-3 py-1.5 bg-destructive/10 text-destructive rounded-full text-sm font-medium">
-                            {key === 'fever' && '🌡️ Fever'}
-                            {key === 'chestPain' && '💔 Chest Pain'}
-                            {key === 'breathingDifficulty' && '😮‍💨 Breathing Difficulty'}
-                            {key === 'confusion' && '😵 Confusion'}
-                            {key === 'fainting' && '😵‍💫 Fainting'}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Associated Symptoms */}
-                  {viewingSymptomReport.associated_symptoms && viewingSymptomReport.associated_symptoms.length > 0 && (
-                    <div>
-                      <p className="text-xs uppercase tracking-wide text-muted-foreground mb-2">Associated Symptoms</p>
-                      <div className="flex flex-wrap gap-2">
-                        {viewingSymptomReport.associated_symptoms.map((symptom, i) => (
-                          <Badge key={i} variant="secondary" className="text-sm px-3 py-1">
-                            {symptom}
-                          </Badge>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Patient's Words */}
-                  {viewingSymptomReport.full_transcript && (
-                    <div>
-                      <p className="text-xs uppercase tracking-wide text-muted-foreground mb-2 flex items-center gap-1">
-                        <Mic className="h-3 w-3" /> Patient's Own Words
-                      </p>
-                      <div className="bg-muted/50 rounded-xl p-4 border-l-4 border-primary/30">
-                        <p className="text-sm leading-relaxed whitespace-pre-line italic text-foreground/80">
-                          "{viewingSymptomReport.full_transcript}"
-                        </p>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Full Report - Collapsible */}
-                  <details className="group">
-                    <summary className="flex items-center justify-between p-3 bg-muted/30 rounded-lg cursor-pointer hover:bg-muted/50 transition-colors text-sm">
-                      <span className="font-medium flex items-center gap-2">
-                        <FileText className="h-4 w-4" />
-                        View Full Structured Report
-                      </span>
-                      <ChevronDown className="h-4 w-4 transition-transform group-open:rotate-180" />
-                    </summary>
-                    <div className="mt-2 p-4 bg-muted/20 rounded-lg border">
-                      <pre className="text-xs whitespace-pre-wrap font-mono leading-relaxed">{viewingSymptomReport.full_report}</pre>
-                    </div>
-                  </details>
-                </div>
-              </ScrollArea>
-            </>
-          )}
-        </DialogContent>
-      </Dialog>
+        </CardContent>
+      </Card>
 
       <Card>
         <CardContent className="pt-4">
@@ -1411,6 +2054,42 @@ export default function UnifiedClinicalAnalysis({
           </p>
         </CardContent>
       </Card>
+
+      {isDoctor && (
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm flex items-center justify-between">
+              <span className="flex items-center gap-2">
+                <Activity className="h-4 w-4" />
+                Vitals
+              </span>
+              <Button variant="outline" size="sm" onClick={openVitalsDialog}>
+                Update Vitals
+              </Button>
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="text-sm">
+            {manualVitals ? (
+              <div className="flex flex-wrap gap-4 text-muted-foreground">
+                <span>BP {manualVitals.bp || '----'}</span>
+                <span>HR {manualVitals.hr || '----'}</span>
+                <span>SpO2 {manualVitals.o2 ? `${manualVitals.o2}%` : '----'}</span>
+                <span>Wt {manualVitals.weight_kg || '----'} kg</span>
+                {manualVitals.date && (
+                  <span>{new Date(manualVitals.date).toLocaleDateString()}</span>
+                )}
+              </div>
+            ) : (
+              <div className="flex flex-wrap gap-4 text-muted-foreground">
+                <span>BP ----</span>
+                <span>HR ----</span>
+                <span>SpO2 ----</span>
+                <span>Wt ---- kg</span>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       <VoiceClinicalInput
         value={clinicalNotes}
@@ -1447,6 +2126,171 @@ export default function UnifiedClinicalAnalysis({
             <pre className="text-sm whitespace-pre-wrap font-mono bg-muted/50 p-4 rounded-lg">
               {viewingDocument?.content}
             </pre>
+          </ScrollArea>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={isVitalsDialogOpen} onOpenChange={setIsVitalsDialogOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Update Vitals</DialogTitle>
+          </DialogHeader>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-sm font-medium">Systolic BP</label>
+              <Input
+                type="number"
+                value={vitalsForm.systolic}
+                onChange={(e) => setVitalsForm((prev) => ({ ...prev, systolic: e.target.value }))}
+                placeholder="e.g., 120"
+              />
+            </div>
+            <div>
+              <label className="text-sm font-medium">Diastolic BP</label>
+              <Input
+                type="number"
+                value={vitalsForm.diastolic}
+                onChange={(e) => setVitalsForm((prev) => ({ ...prev, diastolic: e.target.value }))}
+                placeholder="e.g., 80"
+              />
+            </div>
+            <div>
+              <label className="text-sm font-medium">Heart Rate</label>
+              <Input
+                type="number"
+                value={vitalsForm.hr}
+                onChange={(e) => setVitalsForm((prev) => ({ ...prev, hr: e.target.value }))}
+                placeholder="e.g., 72"
+              />
+            </div>
+            <div>
+              <label className="text-sm font-medium">SpO2 %</label>
+              <Input
+                type="number"
+                value={vitalsForm.o2}
+                onChange={(e) => setVitalsForm((prev) => ({ ...prev, o2: e.target.value }))}
+                placeholder="e.g., 98"
+              />
+            </div>
+            <div>
+              <label className="text-sm font-medium">Weight (kg)</label>
+              <Input
+                type="number"
+                value={vitalsForm.weight}
+                onChange={(e) => setVitalsForm((prev) => ({ ...prev, weight: e.target.value }))}
+                placeholder="e.g., 70"
+              />
+            </div>
+            <div className="col-span-2">
+              <label className="text-sm font-medium">Recorded At</label>
+              <Input
+                type="datetime-local"
+                value={vitalsForm.recordedAt}
+                onChange={(e) => setVitalsForm((prev) => ({ ...prev, recordedAt: e.target.value }))}
+              />
+            </div>
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={() => setIsVitalsDialogOpen(false)} disabled={isSavingVitals}>
+              Cancel
+            </Button>
+            <Button onClick={handleSaveVitals} disabled={isSavingVitals}>
+              {isSavingVitals ? 'Saving...' : 'Save Vitals'}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!viewingEncounter} onOpenChange={() => setViewingEncounter(null)}>
+        <DialogContent className="max-w-2xl max-h-[80vh]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Stethoscope className="h-5 w-5" />
+              Encounter Details
+            </DialogTitle>
+          </DialogHeader>
+          <ScrollArea className="h-[60vh] mt-4">
+            {viewingEncounter && (
+              <div className="space-y-4 text-sm">
+                <div className="flex items-center justify-between">
+                  <span className="text-muted-foreground">Encounter date</span>
+                  <span className="font-medium">{formatDisplayDate(viewingEncounter.encounter_date)}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-muted-foreground">Type</span>
+                  <span className="font-medium">{viewingEncounter.encounter_type}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-muted-foreground">Specialty</span>
+                  <span className="font-medium">{viewingEncounter.specialty}</span>
+                </div>
+                {viewingEncounter.provider_name && (
+                  <div className="flex items-center justify-between">
+                    <span className="text-muted-foreground">Provider</span>
+                    <span className="font-medium">{viewingEncounter.provider_name}</span>
+                  </div>
+                )}
+                {viewingEncounter.chief_complaint && (
+                  <div>
+                    <span className="text-muted-foreground block mb-1">Chief complaint</span>
+                    <div className="bg-muted/50 p-3 rounded-lg">{viewingEncounter.chief_complaint}</div>
+                  </div>
+                )}
+              </div>
+            )}
+          </ScrollArea>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!viewingSoapNote} onOpenChange={() => setViewingSoapNote(null)}>
+        <DialogContent className="max-w-3xl max-h-[80vh]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <FileText className="h-5 w-5" />
+              SOAP Note
+            </DialogTitle>
+          </DialogHeader>
+          <ScrollArea className="h-[60vh] mt-4">
+            {viewingSoapNote && (
+              <div className="space-y-4 text-sm">
+                <div className="flex items-center justify-between">
+                  <span className="text-muted-foreground">Created</span>
+                  <span className="font-medium">{formatDisplayDate(viewingSoapNote.created_at)}</span>
+                </div>
+                {viewingSoapNote.subjective && (
+                  <div>
+                    <span className="text-muted-foreground block mb-1">Subjective</span>
+                    <div className="bg-muted/50 p-3 rounded-lg whitespace-pre-wrap">
+                      {viewingSoapNote.subjective}
+                    </div>
+                  </div>
+                )}
+                {viewingSoapNote.objective && (
+                  <div>
+                    <span className="text-muted-foreground block mb-1">Objective</span>
+                    <pre className="bg-muted/50 p-3 rounded-lg text-xs whitespace-pre-wrap font-mono">
+                      {JSON.stringify(viewingSoapNote.objective, null, 2)}
+                    </pre>
+                  </div>
+                )}
+                {viewingSoapNote.assessment && (
+                  <div>
+                    <span className="text-muted-foreground block mb-1">Assessment</span>
+                    <div className="bg-muted/50 p-3 rounded-lg whitespace-pre-wrap">
+                      {viewingSoapNote.assessment}
+                    </div>
+                  </div>
+                )}
+                {viewingSoapNote.plan && (
+                  <div>
+                    <span className="text-muted-foreground block mb-1">Plan</span>
+                    <div className="bg-muted/50 p-3 rounded-lg whitespace-pre-wrap">
+                      {viewingSoapNote.plan}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
           </ScrollArea>
         </DialogContent>
       </Dialog>

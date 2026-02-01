@@ -60,12 +60,33 @@ interface PatientDataSources {
   detected_alerts?: Array<{ alert_type: string; priority: string; title: string; description: string }>;
 }
 
+interface EncounterSummary {
+  id: string;
+  encounter_date: string;
+  encounter_type: string;
+  specialty: string;
+  chief_complaint: string | null;
+  provider_name: string | null;
+}
+
+interface SoapNoteSummary {
+  id: string;
+  encounter_id: string;
+  subjective: string | null;
+  assessment: string | null;
+  plan: string | null;
+  created_at: string | null;
+}
+
 interface AnalysisChatbotProps {
   patientId: string;
   patientName?: string;
   deepAnalysis?: ClinicalPipelineResult | null;
   brief?: BriefContent | null;
   dataSources?: PatientDataSources | null;
+  encounters?: EncounterSummary[];
+  soapNotes?: SoapNoteSummary[];
+  vitalsOverride?: PatientDataSources['recent_vitals'] | null;
   chiefComplaint?: string;
   clinicalNotes?: string;
   onAnalysisUpdate?: (updatedAnalysis: ClinicalPipelineResult) => void;
@@ -92,6 +113,9 @@ export default function AnalysisChatbot({
   deepAnalysis,
   brief,
   dataSources,
+  encounters,
+  soapNotes,
+  vitalsOverride,
   chiefComplaint,
   clinicalNotes,
 }: AnalysisChatbotProps) {
@@ -176,6 +200,12 @@ export default function AnalysisChatbot({
   // =============================================================================
 
   const buildAnalysisContext = (): string => {
+    const truncate = (value?: string | null, maxLength: number = 280) => {
+      if (!value) return '';
+      if (value.length <= maxLength) return value;
+      return `${value.slice(0, maxLength)}…`;
+    };
+
     let context = `=== PATIENT CLINICAL CONTEXT ===\n`;
     context += `Patient: ${patientName || 'Unknown'}\n`;
     context += `Chief Complaint: ${chiefComplaint || 'Not specified'}\n\n`;
@@ -185,9 +215,10 @@ export default function AnalysisChatbot({
       context += `=== CLINICAL NOTES ===\n${clinicalNotes}\n\n`;
     }
     
-    // Include vitals from dataSources
-    if (dataSources?.recent_vitals) {
-      const v = dataSources.recent_vitals;
+    // Include vitals (prefer explicit override if provided)
+    const vitals = vitalsOverride || dataSources?.recent_vitals;
+    if (vitals) {
+      const v = vitals;
       context += `=== VITALS ===\n`;
       context += `Blood Pressure: ${v.bp}\n`;
       context += `Heart Rate: ${v.hr} bpm\n`;
@@ -251,6 +282,9 @@ export default function AnalysisChatbot({
     if (brief) {
       context += `=== AI CLINICAL BRIEF ===\n`;
       if (brief.summary) context += `Summary: ${brief.summary}\n`;
+      if (brief.clinicalInsights?.length) {
+        context += `Clinical Reasoning: ${brief.clinicalInsights.join(' | ')}\n`;
+      }
       if (brief.differentialConsiderations?.length) {
         context += `Differential: ${brief.differentialConsiderations.join(', ')}\n`;
       }
@@ -308,8 +342,83 @@ export default function AnalysisChatbot({
         }
       }
     }
+
+    // Include recent encounters (prior visits)
+    const encounterById = new Map(encounters?.map((encounter) => [encounter.id, encounter]) || []);
+    if (encounters?.length) {
+      context += `=== PRIOR VISITS (RECENT) ===\n`;
+      encounters.slice(0, 5).forEach((encounter) => {
+        context += `- ${encounter.encounter_date} (${encounter.encounter_type}, ${encounter.specialty})`;
+        if (encounter.provider_name) context += ` with ${encounter.provider_name}`;
+        if (encounter.chief_complaint) context += `; CC: ${encounter.chief_complaint}`;
+        context += `\n`;
+      });
+      context += `\n`;
+    }
+
+    // Include SOAP note summaries if available
+    if (soapNotes?.length) {
+      context += `=== PRIOR SOAP NOTES (SUMMARY) ===\n`;
+      soapNotes.slice(0, 3).forEach((soap) => {
+        const encounter = encounterById.get(soap.encounter_id);
+        const encounterDate = encounter?.encounter_date || soap.created_at || '';
+        const provider = encounter?.provider_name ? ` | Provider: ${encounter.provider_name}` : '';
+        const created = encounterDate ? ` (${encounterDate}${provider})` : '';
+        const subjective = truncate(soap.subjective, 240);
+        const assessment = truncate(soap.assessment, 240);
+        const plan = truncate(soap.plan, 240);
+        context += `- SOAP${created}\n`;
+        if (subjective) context += `  Subjective: ${subjective}\n`;
+        if (assessment) context += `  Assessment: ${assessment}\n`;
+        if (plan) context += `  Plan: ${plan}\n`;
+      });
+      context += `\n`;
+    }
     
     return context;
+  };
+
+  const renderInlineBold = (text: string) => {
+    const parts = text.split(/(\*\*[^*]+\*\*)/g).filter(Boolean);
+    return parts.map((part, index) => {
+      if (part.startsWith('**') && part.endsWith('**')) {
+        const content = part.slice(2, -2);
+        return (
+          <strong key={`bold-${index}`} className="font-semibold text-foreground">
+            {content}
+          </strong>
+        );
+      }
+      return <span key={`text-${index}`}>{part}</span>;
+    });
+  };
+
+  const renderFormattedMessage = (content: string) => {
+    const lines = content.split(/\n+/);
+    const listItems = lines.filter((line) => line.trim().startsWith('- '));
+    const hasList = listItems.length > 0 && listItems.length === lines.length;
+
+    if (hasList) {
+      return (
+        <ul className="space-y-1">
+          {lines.map((line, index) => (
+            <li key={`li-${index}`} className="text-sm">
+              {renderInlineBold(line.replace(/^\s*-\s*/, ''))}
+            </li>
+          ))}
+        </ul>
+      );
+    }
+
+    return (
+      <div className="space-y-1">
+        {lines.map((line, index) => (
+          <p key={`line-${index}`} className="text-sm whitespace-pre-wrap">
+            {renderInlineBold(line)}
+          </p>
+        ))}
+      </div>
+    );
   };
 
   // =============================================================================
@@ -456,7 +565,9 @@ export default function AnalysisChatbot({
                       </div>
                     )}
                     <div className={`max-w-[80%] rounded-lg p-3 ${message.role === 'user' ? 'bg-primary text-primary-foreground' : 'bg-muted'}`}>
-                      <p className="text-sm whitespace-pre-wrap">{message.content}</p>
+                      {message.role === 'assistant'
+                        ? renderFormattedMessage(message.content)
+                        : <p className="text-sm whitespace-pre-wrap">{message.content}</p>}
                       
                       {message.citations && message.citations.length > 0 && (
                         <div className="flex flex-wrap gap-1 mt-2 pt-2 border-t border-border/50">
@@ -528,7 +639,7 @@ export default function AnalysisChatbot({
           <div className="flex items-start gap-2 mt-3 p-2 rounded bg-amber-500/10 border border-amber-500/20">
             <AlertCircle className="h-4 w-4 text-amber-500 flex-shrink-0 mt-0.5" />
             <p className="text-[10px] text-muted-foreground">
-              This AI assistant provides information based on the analysis. Always consult with healthcare providers for medical decisions.
+              Thisis an AI assistant. It can make mistakes.
             </p>
           </div>
         </CardContent>
