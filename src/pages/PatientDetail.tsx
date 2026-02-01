@@ -3,8 +3,7 @@ import { useParams } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
 import DoctorLayout from '@/components/layout/DoctorLayout';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Loader2, Clock, MessageSquare, Sparkles } from 'lucide-react';
-import TimelineTab from '@/components/doctor/TimelineTab';
+import { Loader2, MessageSquare, Sparkles } from 'lucide-react';
 import UnifiedClinicalAnalysis from '@/components/doctor/UnifiedClinicalAnalysis';
 import ChatTab from '@/components/doctor/ChatTab';
 
@@ -14,28 +13,10 @@ interface Patient {
   dob: string | null;
 }
 
-interface Document {
-  id: string;
-  filename: string;
-  doc_type: string;
-  status: string;
-  created_at: string;
-}
-
-interface Symptom {
-  id: string;
-  description: string;
-  onset_date: string | null;
-  severity: number | null;
-  created_at: string;
-}
-
 export default function PatientDetail() {
   const { id } = useParams<{ id: string }>();
   const [loading, setLoading] = useState(true);
   const [patient, setPatient] = useState<Patient | null>(null);
-  const [documents, setDocuments] = useState<Document[]>([]);
-  const [symptoms, setSymptoms] = useState<Symptom[]>([]);
 
   useEffect(() => {
     if (id) {
@@ -56,24 +37,6 @@ export default function PatientDetail() {
 
       if (patientError) throw patientError;
       setPatient(patientData);
-
-      // Fetch documents
-      const { data: docsData } = await supabase
-        .from('documents')
-        .select('*')
-        .eq('patient_id', id)
-        .order('created_at', { ascending: false });
-
-      setDocuments(docsData || []);
-
-      // Fetch symptoms
-      const { data: symptomsData } = await supabase
-        .from('symptoms')
-        .select('*')
-        .eq('patient_id', id)
-        .order('created_at', { ascending: false });
-
-      setSymptoms(symptomsData || []);
 
     } catch (error) {
       console.error('Error fetching patient data:', error);
@@ -119,12 +82,8 @@ export default function PatientDetail() {
           )}
         </div>
 
-        <Tabs defaultValue="timeline" className="space-y-6">
-          <TabsList className="grid w-full max-w-xl grid-cols-3">
-            <TabsTrigger value="timeline" className="flex items-center gap-2">
-              <Clock className="h-4 w-4" />
-              <span className="hidden sm:inline">Timeline</span>
-            </TabsTrigger>
+        <Tabs defaultValue="analysis" className="space-y-6">
+          <TabsList className="grid w-full max-w-xl grid-cols-2">
             <TabsTrigger value="analysis" className="flex items-center gap-2">
               <Sparkles className="h-4 w-4" />
               <span className="hidden sm:inline">Analysis</span>
@@ -135,16 +94,7 @@ export default function PatientDetail() {
             </TabsTrigger>
           </TabsList>
 
-          <TabsContent value="timeline" className="animate-fade-in">
-            <TimelineTab
-              patientId={patient.id}
-              documents={documents}
-              symptoms={symptoms}
-              onRefresh={fetchPatientData}
-            />
-          </TabsContent>
-
-          <TabsContent value="analysis" className="animate-fade-in" forceMount>
+          <TabsContent value="analysis" className="animate-fade-in">
             <UnifiedClinicalAnalysis
               patientId={patient.id}
               patientName={patient.full_name}
