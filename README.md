@@ -1,4 +1,4 @@
-# Doc Insight Hub
+# DocAssist
 
 AI-powered clinical documentation and insight platform.
 
